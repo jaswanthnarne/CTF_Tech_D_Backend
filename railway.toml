@@ -2,4 +2,4 @@
 builder = "nixpacks"
 
 [build.args]
-NIXPACKS_BUILD_CMD = "npm rebuild bcrypt --build-from-source && npm install"
+NIXPACKS_BUILD_CMD = "npm rebuild bcrypt --build-from-source && npm install" 
