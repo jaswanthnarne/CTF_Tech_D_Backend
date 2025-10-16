@@ -2,7 +2,7 @@ const express = require('express');
 const User = require('../models/User');
 const { body, validationResult } = require('express-validator');
 const jwt = require("jsonwebtoken");
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const sendMail = require('../utils/sendMail');
 
