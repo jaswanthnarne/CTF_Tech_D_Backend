@@ -3,12 +3,12 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const mongoose = require('mongoose'); // Added mongoose import
+const mongoose = require('mongoose');
 require('dotenv').config();
 
 const connectDB = require('./config/dbconfig');
 
-// Route imports
+// Route imports - FIXED: Check if these files exist and export correctly
 const authRoutes = require('./routes/authRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const ctfRoutes = require('./routes/ctfRoutes');
@@ -16,14 +16,28 @@ const userRoutes = require('./routes/userRoutes');
 
 const app = express();
 
+// Add error handlers at the TOP
+process.on('unhandledRejection', (err) => {
+  console.log('UNHANDLED REJECTION! 💥 Shutting down...');
+  console.log(err.name, err.message);
+  process.exit(1);
+});
+
+process.on('uncaughtException', (err) => {
+  console.log('UNCAUGHT EXCEPTION! 💥 Shutting down...');
+  console.log(err.name, err.message);
+  process.exit(1);
+});
+
 // Connect to Database
 connectDB();
 
-// Configure CORS for multiple origins
+// Configure CORS for multiple origins - FIXED: Add Railway URL
 const allowedOrigins = [
-  'https://ctfchallange.vercel.app', // Your Vercel frontend
-  'http://localhost:5173', // Local development
-  'http://localhost:3000', // Alternative local port
+  'https://ctfchallange.vercel.app',
+  'https://ctftechdbackend-production.up.railway.app', // ADD THIS
+  'http://localhost:5173',
+  'http://localhost:3000',
 ];
 
 const corsOptions = {
@@ -45,17 +59,16 @@ const corsOptions = {
 
 // Security Middleware
 app.use(helmet({
-  crossOriginResourcePolicy: { policy: "cross-origin" } // Allow images and resources from different origins
+  crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
-app.use(cors(corsOptions));
 
-// Handle preflight requests
-app.options('*', cors(corsOptions));
+// FIXED: Use simpler CORS setup for Railway
+app.use(cors(corsOptions));
 
 // Rate Limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 500, // requests per window
+  windowMs: 15 * 60 * 1000,
+  max: 500,
   message: {
     error: 'Too many requests from this IP, please try again later.',
     retryAfter: '15 minutes'
@@ -76,11 +89,24 @@ app.use((req, res, next) => {
   next();
 });
 
-// API Routes
-app.use('/api/auth', authRoutes.router);
-app.use('/api/admin', adminRoutes.router);
-app.use('/api/ctf', ctfRoutes);
-app.use('/api/user', userRoutes);
+// FIXED: Add a simple test route FIRST
+app.get('/test', (req, res) => {
+  res.json({ 
+    message: 'Test endpoint working!',
+    timestamp: new Date().toISOString(),
+    database: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected'
+  });
+});
+
+// API Routes - FIXED: Add error handling for routes
+try {
+  app.use('/api/auth', authRoutes.router || authRoutes);
+  app.use('/api/admin', adminRoutes.router || adminRoutes);
+  app.use('/api/ctf', ctfRoutes.router || ctfRoutes);
+  app.use('/api/user', userRoutes.router || userRoutes);
+} catch (error) {
+  console.error('Route loading error:', error);
+}
 
 // Health Check
 app.get('/api/health', (req, res) => {
@@ -102,18 +128,8 @@ app.get('/', (req, res) => {
     message: 'CTF Platform API - Pure CTF Management System',
     version: '1.0.0',
     environment: process.env.NODE_ENV || 'development',
-    cors: {
-      enabled: true,
-      allowedOrigins: allowedOrigins
-    },
-    endpoints: {
-      auth: '/api/auth',
-      admin: '/api/admin', 
-      ctf: '/api/ctf',
-      user: '/api/user',
-      health: '/api/health'
-    },
-    documentation: 'Check /api/health for detailed status'
+    status: 'operational',
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -123,31 +139,7 @@ app.get('/api', (req, res) => {
     name: 'CTF Platform API',
     version: '1.0.0',
     status: 'operational',
-    cors: {
-      enabled: true,
-      allowedOrigins: allowedOrigins
-    },
-    endpoints: {
-      authentication: {
-        login: 'POST /api/auth/login',
-        register: 'POST /api/auth/register',
-        logout: 'POST /api/auth/logout',
-        refresh: 'POST /api/auth/refresh'
-      },
-      admin: {
-        users: 'GET /api/admin/users',
-        ctfs: 'GET /api/admin/ctfs'
-      },
-      ctf: {
-        list: 'GET /api/ctf',
-        details: 'GET /api/ctf/:id',
-        submit: 'POST /api/ctf/:id/submit'
-      },
-      user: {
-        profile: 'GET /api/user/profile',
-        dashboard: 'GET /api/user/dashboard'
-      }
-    }
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -156,29 +148,13 @@ app.use('*', (req, res) => {
   res.status(404).json({ 
     error: 'Route not found',
     path: req.originalUrl,
-    method: req.method,
-    availableRoutes: [
-      '/api/auth/*',
-      '/api/admin/*',
-      '/api/ctf/*', 
-      '/api/user/*',
-      '/api/health',
-      '/api'
-    ],
-    documentation: 'Visit /api for API documentation'
+    method: req.method
   });
 });
 
 // Global error handler
 app.use((err, req, res, next) => {
   console.error('Error Stack:', err.stack);
-  console.error('Error Details:', {
-    message: err.message,
-    url: req.originalUrl,
-    method: req.method,
-    origin: req.headers.origin,
-    body: req.body
-  });
   
   // CORS errors
   if (err.message === 'Not allowed by CORS') {
@@ -189,54 +165,22 @@ app.use((err, req, res, next) => {
     });
   }
   
-  // JSON parsing errors
-  if (err.type === 'entity.parse.failed') {
-    return res.status(400).json({ 
-      error: 'Invalid JSON in request body',
-      message: 'Please check your request body format'
-    });
-  }
-  
-  // Mongoose errors
-  if (err.name === 'ValidationError') {
-    return res.status(400).json({
-      error: 'Validation Error',
-      details: Object.values(err.errors).map(e => e.message)
-    });
-  }
-  
-  if (err.name === 'CastError') {
-    return res.status(400).json({
-      error: 'Invalid ID format',
-      message: 'The provided ID is not valid'
-    });
-  }
-  
-  // Default error
   res.status(err.status || 500).json({ 
     error: 'Internal server error',
-    message: process.env.NODE_ENV === 'production' ? 'Something went wrong' : err.message,
-    ...(process.env.NODE_ENV !== 'production' && { 
-      stack: err.stack,
-      details: err 
-    })
+    message: process.env.NODE_ENV === 'production' ? 'Something went wrong' : err.message
   });
 });
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 8080;
 
-app.listen(PORT, '0.0.0.0', () => {
+// FIXED: Remove '0.0.0.0' and use simpler listen
+app.listen(PORT, () => {
   console.log(`
 🚀 CTF Platform Server running on port ${PORT}
 📊 Environment: ${process.env.NODE_ENV || 'development'}
-🔗 Allowed Frontend URLs:
-   - https://ctfchallange.vercel.app
-   - http://localhost:5173
-   - http://localhost:3000
-📧 Email Service: ${process.env.EMAIL_USER ? 'Enabled' : 'Disabled'}
-🌐 API Base URL: http://localhost:${PORT}/api
-🔍 Health Check: http://localhost:${PORT}/api/health
-📚 API Docs: http://localhost:${PORT}/api
+🌐 Railway URL: https://ctftechdbackend-production.up.railway.app
+✅ Test URL: https://ctftechdbackend-production.up.railway.app/test
+🔍 Health Check: https://ctftechdbackend-production.up.railway.app/api/health
   `);
 });
 
