@@ -15,8 +15,10 @@ const requireAuth = async (req, res, next) => {
   try {
     console.log('🔐 requireAuth middleware checking authentication...');
     
-    const token = req.cookies?.jwt || req.headers.authorization?.replace('Bearer ', '');
-    console.log('📡 Token present:', !!token);
+       let token = req.cookies?.jwt || 
+                   req.headers.authorization?.replace('Bearer ', '') ||
+                   req.headers.Authorization?.replace('Bearer ', '') ||
+                   req.query?.token;
     
     if (!token) {
       console.log('❌ No token found - authentication required');
