@@ -172,7 +172,7 @@ router.get('/leaderboard/global', async (req, res) => {
 // PROTECTED ROUTES (Require Auth)
 // ==========================
 
-// Join CTF - Add proper status validation
+// Join CTF - Fix validation
 router.post('/ctfs/:id/join', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
@@ -187,16 +187,37 @@ router.post('/ctfs/:id/join', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'CTF not found' });
     }
 
+    console.log('🔍 Join CTF Validation:', {
+      title: ctf.title,
+      isVisible: ctf.isVisible,
+      isPublished: ctf.isPublished,
+      status: ctf.status,
+      isCurrentlyActive: ctf.isCurrentlyActive(),
+      currentTime: new Date().toLocaleTimeString(),
+      activeHours: ctf.activeHours
+    });
+
     // Enhanced validation for joining
     if (!ctf.isVisible || !ctf.isPublished) {
-      return res.status(403).json({ error: 'CTF is not available for joining' });
+      return res.status(403).json({ 
+        error: 'CTF is not available for joining',
+        details: {
+          isVisible: ctf.isVisible,
+          isPublished: ctf.isPublished
+        }
+      });
     }
 
-    // Check if CTF is currently active
+    // Check if CTF is currently active using the same method as status calculation
     const isActive = ctf.isCurrentlyActive();
-    if (!isActive && ctf.status !== 'active') {
+    if (!isActive) {
       return res.status(403).json({ 
-        error: 'CTF is not currently active. Please check the active hours.' 
+        error: `CTF is only active between ${ctf.activeHours.startTime} - ${ctf.activeHours.endTime}. Current time: ${new Date().toLocaleTimeString()}`,
+        details: {
+          activeHours: ctf.activeHours,
+          currentTime: new Date().toLocaleTimeString(),
+          backendStatus: ctf.status
+        }
       });
     }
 

@@ -1376,7 +1376,39 @@ router.get('/ctf-analytics/:id', requireAdmin, async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
-
+// In adminRoutes.js - Add force status recalculation
+router.post('/ctfs/recalculate-statuses', requireAdmin, async (req, res) => {
+  try {
+    const ctfs = await CTF.find({});
+    let updated = 0;
+    
+    for (const ctf of ctfs) {
+      const oldStatus = ctf.status;
+      const newStatus = ctf.calculateStatus();
+      
+      if (oldStatus !== newStatus) {
+        ctf.status = newStatus;
+        await ctf.save();
+        updated++;
+        
+        console.log('🔄 Status Updated:', {
+          title: ctf.title,
+          from: oldStatus,
+          to: newStatus,
+          isCurrentlyActive: ctf.isCurrentlyActive()
+        });
+      }
+    }
+    
+    res.json({
+      message: `CTF statuses recalculated: ${updated} updated`,
+      updated
+    });
+  } catch (error) {
+    console.error('Recalculate statuses error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
 // ==========================
 // System Management
 // ==========================

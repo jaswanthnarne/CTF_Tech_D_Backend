@@ -140,11 +140,11 @@ const ctfSchema = new mongoose.Schema({
 });
 
 // Enhanced status calculation based on timing
-// In CTF.js - Replace calculateStatus and isCurrentlyActive methods
+// In CTF.js - Fix the calculateStatus method
 ctfSchema.methods.calculateStatus = function() {
   const now = new Date();
   
-  console.log('🔍 CTF Status Calculation (Active Hours Only):', {
+  console.log('🔍 CTF Status Calculation:', {
     title: this.title,
     now: now.toISOString(),
     currentTime: now.toTimeString().slice(0, 8),
@@ -161,50 +161,54 @@ ctfSchema.methods.calculateStatus = function() {
   }
   
   // Check if within active hours
-  if (this.activeHours && this.activeHours.startTime && this.activeHours.endTime) {
-    const currentTime = now.toTimeString().slice(0, 8); // Get HH:MM:SS format
-    
-    // Convert times to minutes since midnight for easy comparison
-    const timeToMinutes = (timeStr) => {
-      const [hours, minutes] = timeStr.split(':').map(Number);
-      return hours * 60 + minutes;
-    };
-    
-    const currentMinutes = timeToMinutes(currentTime);
-    const startMinutes = timeToMinutes(this.activeHours.startTime);
-    const endMinutes = timeToMinutes(this.activeHours.endTime);
-    
-    console.log('🕒 Active Hours Comparison:', {
-      currentMinutes,
-      startMinutes,
-      endMinutes,
-      withinHours: currentMinutes >= startMinutes && currentMinutes <= endMinutes
-    });
-    
-    // Check if within daily active hours
-    if (currentMinutes >= startMinutes && currentMinutes <= endMinutes) {
-      console.log('✅ CTF is active (within active hours)');
-      return 'active';
-    } else {
-      console.log('⏸️ CTF is inactive (outside active hours)');
-      return 'inactive';
-    }
-  }
+  const isActive = this.isCurrentlyActive();
   
-  // If no active hours defined, consider it always active when published and visible
-  console.log('✅ CTF is active (no active hours defined)');
-  return 'active';
+  if (isActive) {
+    console.log('✅ CTF is active (within active hours)');
+    return 'active';
+  } else {
+    console.log('⏸️ CTF is inactive (outside active hours)');
+    return 'inactive';
+  }
 };
 
-// Active hours check only
+// Fix the isCurrentlyActive method
 ctfSchema.methods.isCurrentlyActive = function() {
-  const status = this.calculateStatus();
-  const isActive = status === 'active';
-  console.log('🔍 isCurrentlyActive check:', {
-    title: this.title,
-    status: status,
-    result: isActive
+  const now = new Date();
+  
+  console.log('🔍 Backend Active Hours Check:', {
+    startTime: this.activeHours.startTime,
+    endTime: this.activeHours.endTime,
+    currentTime: now.toTimeString(),
+    currentHours24: now.getHours(),
+    currentMinutes: now.getMinutes()
   });
+
+  const [startHours, startMinutes] = this.activeHours.startTime.split(':').map(Number);
+  const [endHours, endMinutes] = this.activeHours.endTime.split(':').map(Number);
+
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const startMinutesTotal = startHours * 60 + startMinutes;
+  const endMinutesTotal = endHours * 60 + endMinutes;
+
+  console.log('📊 Backend Time Comparison:', {
+    currentMinutes,
+    startMinutesTotal,
+    endMinutesTotal,
+    currentTime24: `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
+  });
+
+  // Handle case where active hours cross midnight
+  let isActive;
+  if (endMinutesTotal < startMinutesTotal) {
+    // Active hours cross midnight (e.g., 22:00 - 06:00)
+    isActive = currentMinutes >= startMinutesTotal || currentMinutes <= endMinutesTotal;
+  } else {
+    // Normal case (e.g., 02:00 - 18:00)
+    isActive = currentMinutes >= startMinutesTotal && currentMinutes <= endMinutesTotal;
+  }
+
+  console.log('✅ Backend Active Status:', isActive);
   return isActive;
 };
 
