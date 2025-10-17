@@ -821,7 +821,7 @@ router.get('/ctfs/:id/joined', requireAuth, async (req, res) => {
 // Get available CTFs for user with IST status
 router.get('/ctfs/available', requireAuth, async (req, res) => {
   try {
-    const { page = 1, limit = 10, category = 'all', search = '' } = req.query;
+    const { page = 1, limit = 10, category = 'all', search = '',status='all' } = req.query;
     
     let filter = { 
       isVisible: true, 
@@ -837,6 +837,10 @@ router.get('/ctfs/available', requireAuth, async (req, res) => {
         { title: { $regex: search, $options: 'i' } },
         { description: { $regex: search, $options: 'i' } }
       ];
+    }
+
+      if (status !== 'all') {
+      filter.status = status;
     }
 
     const ctfs = await CTF.find(filter)
