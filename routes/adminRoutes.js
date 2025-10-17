@@ -2710,10 +2710,11 @@ router.get('/analytics/submissions', requireAdmin, async (req, res) => {
   }
 });
 
-// Enhanced submission statistics with proper error handling
 router.get('/submissions/stats', requireAdmin, async (req, res) => {
   try {
     const { timeRange = '7d' } = req.query;
+    
+    console.log('📊 Fetching submission stats for timeRange:', timeRange);
     
     // Validate timeRange parameter
     const validTimeRanges = ['24h', '7d', '30d', 'all'];
@@ -2727,110 +2728,97 @@ router.get('/submissions/stats', requireAdmin, async (req, res) => {
     let dateFilter = {};
     const now = new Date();
     
+    // Set date filter based on timeRange
     if (timeRange !== 'all') {
-      let days = 7; // default
+      let milliseconds;
       switch (timeRange) {
         case '24h':
-          days = 1;
+          milliseconds = 24 * 60 * 60 * 1000;
+          break;
+        case '7d':
+          milliseconds = 7 * 24 * 60 * 60 * 1000;
           break;
         case '30d':
-          days = 30;
+          milliseconds = 30 * 24 * 60 * 60 * 1000;
           break;
+        default:
+          milliseconds = 7 * 24 * 60 * 60 * 1000;
       }
-      dateFilter.submittedAt = { $gte: new Date(now - days * 24 * 60 * 60 * 1000) };
+      dateFilter.submittedAt = { $gte: new Date(now - milliseconds) };
     }
 
-    const [statusStats, totalStats, dailyStats, ctfStats] = await Promise.all([
-      // Status distribution
-      Submission.aggregate([
-        { $match: dateFilter },
-        {
-          $group: {
-            _id: '$submissionStatus',
-            count: { $sum: 1 }
-          }
+    console.log('📅 Date filter:', dateFilter);
+
+    // Get status distribution
+    const statusDistribution = await Submission.aggregate([
+      { $match: dateFilter },
+      {
+        $group: {
+          _id: '$submissionStatus',
+          count: { $sum: 1 }
         }
-      ]),
-      
-      // Total statistics
-      Submission.aggregate([
-        { $match: dateFilter },
-        {
-          $group: {
-            _id: null,
-            totalSubmissions: { $sum: 1 },
-            pendingSubmissions: {
-              $sum: { $cond: [{ $eq: ['$submissionStatus', 'pending'] }, 1, 0] }
-            },
-            approvedSubmissions: {
-              $sum: { $cond: [{ $eq: ['$submissionStatus', 'approved'] }, 1, 0] }
-            },
-            rejectedSubmissions: {
-              $sum: { $cond: [{ $eq: ['$submissionStatus', 'rejected'] }, 1, 0] }
-            },
-            totalPoints: { $sum: '$points' },
-            averagePoints: { $avg: '$points' }
-          }
-        }
-      ]),
-      
-      // Daily submissions for last 7 days
-      Submission.aggregate([
-        {
-          $match: {
-            submittedAt: { $gte: new Date(now - 7 * 24 * 60 * 60 * 1000) }
-          }
-        },
-        {
-          $group: {
-            _id: {
-              $dateToString: {
-                format: '%Y-%m-%d',
-                date: '$submittedAt'
-              }
-            },
-            count: { $sum: 1 },
-            approved: {
-              $sum: { $cond: [{ $eq: ['$submissionStatus', 'approved'] }, 1, 0] }
-            },
-            pending: {
-              $sum: { $cond: [{ $eq: ['$submissionStatus', 'pending'] }, 1, 0] }
-            }
-          }
-        },
-        { $sort: { _id: 1 } }
-      ]),
-      
-      // CTF-wise statistics
-      Submission.aggregate([
-        { $match: dateFilter },
-        {
-          $lookup: {
-            from: 'ctfs',
-            localField: 'ctf',
-            foreignField: '_id',
-            as: 'ctfInfo'
-          }
-        },
-        { $unwind: '$ctfInfo' },
-        {
-          $group: {
-            _id: '$ctfInfo.title',
-            totalSubmissions: { $sum: 1 },
-            approvedSubmissions: {
-              $sum: { $cond: [{ $eq: ['$submissionStatus', 'approved'] }, 1, 0] }
-            },
-            averagePoints: { $avg: '$points' }
-          }
-        },
-        { $sort: { totalSubmissions: -1 } },
-        { $limit: 10 }
-      ])
+      }
     ]);
 
-    const stats = {
-      statusDistribution: statusStats,
-      totals: totalStats[0] || {
+    console.log('📈 Status distribution:', statusDistribution);
+
+    // Get total statistics
+    const totals = await Submission.aggregate([
+      { $match: dateFilter },
+      {
+        $group: {
+          _id: null,
+          totalSubmissions: { $sum: 1 },
+          pendingSubmissions: {
+            $sum: { $cond: [{ $eq: ['$submissionStatus', 'pending'] }, 1, 0] }
+          },
+          approvedSubmissions: {
+            $sum: { $cond: [{ $eq: ['$submissionStatus', 'approved'] }, 1, 0] }
+          },
+          rejectedSubmissions: {
+            $sum: { $cond: [{ $eq: ['$submissionStatus', 'rejected'] }, 1, 0] }
+          },
+          totalPoints: { $sum: '$points' },
+          averagePoints: { $avg: '$points' }
+        }
+      }
+    ]);
+
+    console.log('📊 Totals:', totals);
+
+    // Get daily trends for the last 7 days
+    const dailyTrends = await Submission.aggregate([
+      {
+        $match: {
+          submittedAt: { $gte: new Date(now - 7 * 24 * 60 * 60 * 1000) }
+        }
+      },
+      {
+        $group: {
+          _id: {
+            $dateToString: {
+              format: '%Y-%m-%d',
+              date: '$submittedAt',
+              timezone: 'Asia/Kolkata'
+            }
+          },
+          count: { $sum: 1 },
+          approved: {
+            $sum: { $cond: [{ $eq: ['$submissionStatus', 'approved'] }, 1, 0] }
+          },
+          pending: {
+            $sum: { $cond: [{ $eq: ['$submissionStatus', 'pending'] }, 1, 0] }
+          }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+
+    console.log('📅 Daily trends:', dailyTrends);
+
+    const result = {
+      statusDistribution: statusDistribution,
+      totals: totals[0] || {
         totalSubmissions: 0,
         pendingSubmissions: 0,
         approvedSubmissions: 0,
@@ -2838,17 +2826,20 @@ router.get('/submissions/stats', requireAdmin, async (req, res) => {
         totalPoints: 0,
         averagePoints: 0
       },
-      dailyTrends: dailyStats,
-      topCTFs: ctfStats,
+      dailyTrends: dailyTrends,
       timeRange: timeRange
     };
 
-    res.json(stats);
+    console.log('✅ Final result:', result);
+
+    res.json(result);
+    
   } catch (error) {
-    console.error('Get submission stats error:', error);
+    console.error('❌ Get submission stats error:', error);
     res.status(500).json({ 
       error: 'Failed to fetch submission statistics',
-      details: error.message 
+      details: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 });
