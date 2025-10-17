@@ -12,14 +12,50 @@ const { body, validationResult } = require('express-validator');
 const router = express.Router();
 
 // ==========================
+// IST TIME HELPER FUNCTIONS
+// ==========================
+
+const getCurrentIST = () => {
+  const now = new Date();
+  const istOffset = 5.5 * 60 * 60 * 1000; // IST is UTC+5:30
+  return new Date(now.getTime() + istOffset);
+};
+
+const getCurrentISTString = () => {
+  const istTime = getCurrentIST();
+  return `${istTime.getUTCHours().toString().padStart(2, '0')}:${istTime.getUTCMinutes().toString().padStart(2, '0')}`;
+};
+
+// ==========================
+// MULTER CONFIGURATION
+// ==========================
+
+const storage = multer.memoryStorage();
+const upload = multer({
+  storage: storage,
+  limits: {
+    fileSize: 4 * 1024 * 1024, // 4MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed!'), false);
+    }
+  }
+});
+
+// ==========================
 // PUBLIC ROUTES
 // ==========================
 
-// Health check
+// Health check with IST
 router.get('/health', (req, res) => {
+  const currentIST = getCurrentIST();
   res.json({ 
     message: 'CTF service is running', 
-    timestamp: new Date().toISOString() 
+    timestamp: currentIST.toISOString(),
+    timezone: 'IST (Asia/Kolkata)'
   });
 });
 
@@ -57,9 +93,14 @@ router.get('/ctfs', async (req, res) => {
     // Get unique categories for filter
     const categories = await CTF.distinct('category', { isVisible: true });
 
+    // Add current IST time to response
+    const currentIST = getCurrentISTString();
+
     res.json({
       ctfs,
       categories,
+      currentIST,
+      timezone: 'IST',
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -73,7 +114,7 @@ router.get('/ctfs', async (req, res) => {
   }
 });
 
-// Get single CTF
+// Get single CTF with IST info
 router.get('/ctfs/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -94,9 +135,10 @@ router.get('/ctfs/:id', async (req, res) => {
       return res.status(403).json({ error: 'CTF is not visible' });
     }
 
-    // Calculate current status
+    // Calculate current status with IST
     const currentStatus = ctf.calculateStatus();
     const isCurrentlyActive = ctf.isCurrentlyActive();
+    const currentIST = getCurrentISTString();
     
     res.json({ 
       ctf: {
@@ -104,6 +146,10 @@ router.get('/ctfs/:id', async (req, res) => {
         currentStatus,
         isCurrentlyActive,
         canSubmit: ctf.canSubmit()
+      },
+      timeInfo: {
+        currentIST,
+        timezone: 'IST (Asia/Kolkata)'
       }
     });
   } catch (error) {
@@ -161,7 +207,11 @@ router.get('/leaderboard/global', async (req, res) => {
       }
     ]);
 
-    res.json({ leaderboard });
+    res.json({ 
+      leaderboard,
+      timezone: 'IST',
+      currentIST: getCurrentISTString()
+    });
   } catch (error) {
     console.error('Get global leaderboard error:', error);
     res.status(500).json({ error: 'Server error' });
@@ -172,7 +222,7 @@ router.get('/leaderboard/global', async (req, res) => {
 // PROTECTED ROUTES (Require Auth)
 // ==========================
 
-// Join CTF - Fix validation
+// Join CTF with IST validation
 router.post('/ctfs/:id/join', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
@@ -187,14 +237,18 @@ router.post('/ctfs/:id/join', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'CTF not found' });
     }
 
-    console.log('🔍 Join CTF Validation:', {
+    // Get current IST time for logging and validation
+    const currentIST = getCurrentISTString();
+
+    console.log('🔍 Join CTF Validation (IST):', {
       title: ctf.title,
       isVisible: ctf.isVisible,
       isPublished: ctf.isPublished,
       status: ctf.status,
       isCurrentlyActive: ctf.isCurrentlyActive(),
-      currentTime: new Date().toLocaleTimeString(),
-      activeHours: ctf.activeHours
+      currentIST: currentIST,
+      activeHours: ctf.activeHours,
+      timezone: ctf.activeHours.timezone
     });
 
     // Enhanced validation for joining
@@ -203,20 +257,23 @@ router.post('/ctfs/:id/join', requireAuth, async (req, res) => {
         error: 'CTF is not available for joining',
         details: {
           isVisible: ctf.isVisible,
-          isPublished: ctf.isPublished
+          isPublished: ctf.isPublished,
+          currentIST: currentIST
         }
       });
     }
 
-    // Check if CTF is currently active using the same method as status calculation
+    // Check if CTF is currently active using IST
     const isActive = ctf.isCurrentlyActive();
     if (!isActive) {
       return res.status(403).json({ 
-        error: `CTF is only active between ${ctf.activeHours.startTime} - ${ctf.activeHours.endTime}. Current time: ${new Date().toLocaleTimeString()}`,
+        error: `CTF is only active between ${ctf.activeHours.startTime} - ${ctf.activeHours.endTime} IST. Current time: ${currentIST} IST`,
         details: {
           activeHours: ctf.activeHours,
-          currentTime: new Date().toLocaleTimeString(),
-          backendStatus: ctf.status
+          currentIST: currentIST,
+          backendStatus: ctf.status,
+          isCurrentlyActive: ctf.isCurrentlyActive(),
+          timezone: 'IST (Asia/Kolkata)'
         }
       });
     }
@@ -227,12 +284,27 @@ router.post('/ctfs/:id/join', requireAuth, async (req, res) => {
     );
 
     if (alreadyJoined) {
-      return res.status(400).json({ error: 'Already joined this CTF' });
+      return res.status(400).json({ 
+        error: 'Already joined this CTF',
+        details: {
+          ctfId: ctf._id,
+          ctfTitle: ctf.title
+        }
+      });
     }
 
-    // Add participant
+    // Add participant to CTF
     ctf.addParticipant(userId);
     await ctf.save();
+
+    console.log('✅ CTF Joined Successfully (IST):', {
+      ctfId: ctf._id,
+      ctfTitle: ctf.title,
+      userId: userId,
+      joinedAt: new Date().toISOString(),
+      currentIST: currentIST,
+      activeHours: ctf.activeHours
+    });
 
     res.json({ 
       message: 'Successfully joined CTF', 
@@ -240,16 +312,41 @@ router.post('/ctfs/:id/join', requireAuth, async (req, res) => {
         _id: ctf._id,
         title: ctf.title,
         status: ctf.status,
-        isCurrentlyActive: isActive
+        isCurrentlyActive: isActive,
+        activeHours: ctf.activeHours,
+        timezone: 'IST (Asia/Kolkata)',
+        joinedAt: new Date()
+      },
+      timeInfo: {
+        currentIST: currentIST,
+        serverTime: new Date().toISOString(),
+        timezone: 'IST'
       }
     });
   } catch (error) {
-    console.error('Join CTF error:', error);
-    res.status(500).json({ error: 'Server error' });
+    console.error('❌ Join CTF error:', error);
+    
+    // Get current IST time for error logging
+    const currentIST = getCurrentISTString();
+    
+    console.error('❌ Join CTF Error Details (IST):', {
+      error: error.message,
+      currentIST: currentIST,
+      timestamp: new Date().toISOString()
+    });
+
+    if (error.name === 'CastError') {
+      return res.status(400).json({ error: 'Invalid CTF ID format' });
+    }
+    
+    res.status(500).json({ 
+      error: 'Server error while joining CTF',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
-// Submit flag for CTF
+// Submit flag for CTF with IST validation
 router.post('/ctfs/:id/submit', requireAuth, [
   body('flag').notEmpty().withMessage('Flag is required')
 ], async (req, res) => {
@@ -275,8 +372,24 @@ router.post('/ctfs/:id/submit', requireAuth, [
       return res.status(404).json({ error: 'CTF not found' });
     }
 
+    // Get current IST for logging
+    const currentIST = getCurrentISTString();
+
+    console.log('🔍 Submit Flag Validation (IST):', {
+      title: ctf.title,
+      isVisible: ctf.isVisible,
+      isPublished: ctf.isPublished,
+      status: ctf.status,
+      isCurrentlyActive: ctf.isCurrentlyActive(),
+      currentIST: currentIST,
+      timezone: 'IST'
+    });
+
     if (!ctf.isVisible) {
-      return res.status(403).json({ error: 'CTF is not available' });
+      return res.status(403).json({ 
+        error: 'CTF is not available',
+        details: { currentIST }
+      });
     }
 
     // Check if user has joined the CTF
@@ -289,7 +402,7 @@ router.post('/ctfs/:id/submit', requireAuth, [
     }
 
     try {
-      // Submit flag using CTF method
+      // Submit flag using CTF method (includes IST validation)
       const result = ctf.submitFlag(userId, flag, screenshot);
       
       // Create submission record
@@ -314,28 +427,34 @@ router.post('/ctfs/:id/submit', requireAuth, [
           points: result.points,
           solved: true,
           submissionId: submission._id,
-          attempts: result.attempts
+          attempts: result.attempts,
+          currentIST: currentIST
         });
       } else {
         return res.status(400).json({ 
           error: 'Incorrect flag', 
           solved: false,
           attempts: result.attempts,
-          maxAttempts: result.maxAttempts
+          maxAttempts: result.maxAttempts,
+          currentIST: currentIST
         });
       }
     } catch (submitError) {
       return res.status(400).json({ 
-        error: submitError.message 
+        error: submitError.message,
+        currentIST: getCurrentISTString()
       });
     }
   } catch (error) {
     console.error('Submit flag error:', error);
-    res.status(500).json({ error: 'Server error' });
+    res.status(500).json({ 
+      error: 'Server error',
+      currentIST: getCurrentISTString()
+    });
   }
 });
 
-// Get user's CTF progress
+// Get user's CTF progress with IST info
 router.get('/ctfs/:id/progress', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
@@ -388,7 +507,11 @@ router.get('/ctfs/:id/progress', requireAuth, async (req, res) => {
         isCurrentlyActive: ctf.isCurrentlyActive(),
         rules: ctf.rules
       },
-      progress
+      progress,
+      timeInfo: {
+        currentIST: getCurrentISTString(),
+        timezone: 'IST'
+      }
     });
   } catch (error) {
     console.error('Get CTF progress error:', error);
@@ -412,6 +535,7 @@ router.get('/my-submissions', requireAuth, async (req, res) => {
 
     res.json({
       submissions,
+      currentIST: getCurrentISTString(),
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -451,7 +575,8 @@ router.get('/ctfs/:id/joined', requireAuth, async (req, res) => {
         title: ctf.title,
         status: ctf.status,
         isCurrentlyActive: ctf.isCurrentlyActive()
-      }
+      },
+      currentIST: getCurrentISTString()
     });
   } catch (error) {
     console.error('Check CTF join status error:', error);
@@ -513,25 +638,13 @@ router.get('/ctfs/:id/leaderboard', async (req, res) => {
       }
     ]);
 
-    res.json({ leaderboard });
+    res.json({ 
+      leaderboard,
+      currentIST: getCurrentISTString()
+    });
   } catch (error) {
     console.error('Get CTF leaderboard error:', error);
     res.status(500).json({ error: 'Server error' });
-  }
-});
-// Configure multer for memory storage
-const storage = multer.memoryStorage();
-const upload = multer({
-  storage: storage,
-  limits: {
-    fileSize: 4 * 1024 * 1024, // 4MB limit
-  },
-  fileFilter: (req, file, cb) => {
-    if (file.mimetype.startsWith('image/')) {
-      cb(null, true);
-    } else {
-      cb(new Error('Only image files are allowed!'), false);
-    }
   }
 });
 
@@ -557,7 +670,7 @@ router.get('/ctfs/:id/my-submission', requireAuth, async (req, res) => {
     })
     .populate('ctf', 'title category points activeHours schedule')
     .populate('reviewedBy', 'fullName email')
-    .sort({ submittedAt: -1 }); // Get the latest submission
+    .sort({ submittedAt: -1 });
 
     if (!submission) {
       return res.status(404).json({ 
@@ -569,7 +682,8 @@ router.get('/ctfs/:id/my-submission', requireAuth, async (req, res) => {
     console.log('✅ Submission found:', submission._id);
     res.json({ 
       message: 'Submission found',
-      submission 
+      submission,
+      currentIST: getCurrentISTString()
     });
   } catch (error) {
     console.error('Get user submission error:', error);
@@ -577,8 +691,7 @@ router.get('/ctfs/:id/my-submission', requireAuth, async (req, res) => {
   }
 });
 
-// Submit flag with screenshot
-// In ctfRoutes.js - Update the submit-with-screenshot route validation
+// Submit flag with screenshot (IST validated)
 router.post('/ctfs/:id/submit-with-screenshot', requireAuth, upload.single('screenshot'), [
   body('flag').notEmpty().withMessage('Flag is required')
 ], async (req, res) => {
@@ -595,12 +708,14 @@ router.post('/ctfs/:id/submit-with-screenshot', requireAuth, upload.single('scre
     const { flag } = req.body;
     const userId = req.user._id;
 
-    console.log('📥 Received submission request:', {
+    const currentIST = getCurrentISTString();
+
+    console.log('📥 Received submission request (IST):', {
       ctfId: id,
       userId: userId,
       hasFile: !!req.file,
       flag: flag,
-      currentTime: new Date().toLocaleString()
+      currentIST: currentIST
     });
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -617,15 +732,16 @@ router.post('/ctfs/:id/submit-with-screenshot', requireAuth, upload.single('scre
       return res.status(404).json({ error: 'CTF not found' });
     }
 
-    // Enhanced validation with detailed logging
-    console.log('🔍 Backend Submission Validation:', {
+    // Enhanced validation with IST logging
+    console.log('🔍 Backend Submission Validation (IST):', {
       isVisible: ctf.isVisible,
       isPublished: ctf.isPublished,
       backendStatus: ctf.status,
       canSubmit: ctf.canSubmit(),
       isCurrentlyActive: ctf.isCurrentlyActive(),
       activeHours: ctf.activeHours,
-      currentTime: new Date().toLocaleTimeString()
+      currentIST: currentIST,
+      timezone: 'IST'
     });
 
     // If CTF is not visible or not published, cannot submit
@@ -634,7 +750,8 @@ router.post('/ctfs/:id/submit-with-screenshot', requireAuth, upload.single('scre
         error: 'CTF is not available for submissions',
         details: {
           isVisible: ctf.isVisible,
-          isPublished: ctf.isPublished
+          isPublished: ctf.isPublished,
+          currentIST: currentIST
         }
       });
     }
@@ -645,18 +762,20 @@ router.post('/ctfs/:id/submit-with-screenshot', requireAuth, upload.single('scre
         error: `CTF is ${ctf.status}. Submissions are not allowed.`,
         details: {
           backendStatus: ctf.status,
-          requiredStatus: 'active'
+          requiredStatus: 'active',
+          currentIST: currentIST
         }
       });
     }
 
-    // If backend status is active, check if within active hours using CTF method
+    // If backend status is active, check if within active hours using CTF method (IST)
     if (!ctf.isCurrentlyActive()) {
       return res.status(400).json({ 
-        error: `CTF is only active between ${ctf.activeHours.startTime} - ${ctf.activeHours.endTime}. Current time: ${new Date().toLocaleTimeString()}`,
+        error: `CTF is only active between ${ctf.activeHours.startTime} - ${ctf.activeHours.endTime} IST. Current time: ${currentIST} IST`,
         details: {
           activeHours: ctf.activeHours,
-          currentTime: new Date().toLocaleTimeString()
+          currentIST: currentIST,
+          timezone: 'IST (Asia/Kolkata)'
         }
       });
     }
@@ -687,7 +806,7 @@ router.post('/ctfs/:id/submit-with-screenshot', requireAuth, upload.single('scre
       // Upload screenshot to Cloudinary
       const uploadResult = await uploadToCloudinary(req.file.buffer, `ctf-${id}`);
 
-      // Submit flag using CTF method
+      // Submit flag using CTF method (includes IST validation)
       const result = ctf.submitFlag(userId, flag);
       
       // Create submission record with screenshot
@@ -715,30 +834,41 @@ router.post('/ctfs/:id/submit-with-screenshot', requireAuth, upload.single('scre
       ctf.updateParticipantSubmissionStatus(userId, true);
       await ctf.save();
 
-      console.log('✅ Submission created successfully:', submission._id);
+      console.log('✅ Submission created successfully (IST):', {
+        submissionId: submission._id,
+        currentIST: currentIST
+      });
+
       res.json({ 
         message: 'Submission received! Your screenshot is pending admin review.', 
         submissionId: submission._id,
         submissionStatus: 'pending',
-        attempts: result.attempts
+        attempts: result.attempts,
+        currentIST: currentIST
       });
     } catch (submitError) {
       console.error('Submit flag error:', submitError);
       return res.status(400).json({ 
-        error: submitError.message 
+        error: submitError.message,
+        currentIST: currentIST
       });
     }
   } catch (error) {
     console.error('Submit with screenshot error:', error);
-    res.status(500).json({ error: 'Server error' });
+    res.status(500).json({ 
+      error: 'Server error',
+      currentIST: getCurrentISTString()
+    });
   }
 });
 
-// Edit submission (replace screenshot)
+// Edit submission (replace screenshot) with IST validation
 router.put('/submissions/:submissionId/screenshot', requireAuth, upload.single('screenshot'), async (req, res) => {
   try {
     const { submissionId } = req.params;
     const userId = req.user._id;
+
+    const currentIST = getCurrentISTString();
 
     if (!mongoose.Types.ObjectId.isValid(submissionId)) {
       return res.status(400).json({ error: 'Invalid submission ID format' });
@@ -767,10 +897,14 @@ router.put('/submissions/:submissionId/screenshot', requireAuth, upload.single('
       });
     }
 
-    // Check if CTF is still active
+    // Check if CTF is still active using IST
     if (!submission.ctf.canSubmit()) {
       return res.status(400).json({ 
-        error: 'Cannot edit submission outside CTF active hours' 
+        error: `Cannot edit submission outside CTF active hours. Current time: ${currentIST} IST`,
+        details: {
+          activeHours: submission.ctf.activeHours,
+          currentIST: currentIST
+        }
       });
     }
 
@@ -808,11 +942,16 @@ router.put('/submissions/:submissionId/screenshot', requireAuth, upload.single('
         _id: submission._id,
         submissionStatus: submission.submissionStatus,
         screenshot: submission.screenshot
-      }
+      },
+      currentIST: currentIST
     });
   } catch (error) {
     console.error('Edit submission screenshot error:', error);
-    res.status(500).json({ error: 'Server error' });
+    res.status(500).json({ 
+      error: 'Server error',
+      currentIST: getCurrentISTString()
+    });
   }
 });
+
 module.exports = router;

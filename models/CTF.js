@@ -25,22 +25,22 @@ const ctfSchema = new mongoose.Schema({
     enum: ['Easy', 'Medium', 'Hard', 'Expert'],
     default: 'Easy'
   },
-  // Active hours configuration
+  // Active hours configuration - IST TIMEZONE
   activeHours: {
     startTime: {
-      type: String, // Format: "HH:MM" 24-hour format
+      type: String, // Format: "HH:MM" 24-hour IST format
       required: true
     },
     endTime: {
-      type: String, // Format: "HH:MM" 24-hour format
+      type: String, // Format: "HH:MM" 24-hour IST format
       required: true
     },
     timezone: {
       type: String,
-      default: 'UTC'
+      default: 'Asia/Kolkata' // Force IST timezone
     }
   },
-  // Schedule configuration
+  // Schedule configuration - Dates stored in IST
   schedule: {
     startDate: {
       type: Date,
@@ -96,6 +96,10 @@ const ctfSchema = new mongoose.Schema({
     attempts: {
       type: Number,
       default: 0
+    },
+    hasPendingSubmission: {
+      type: Boolean,
+      default: false
     }
   }],
   totalSubmissions: {
@@ -139,19 +143,82 @@ const ctfSchema = new mongoose.Schema({
   timestamps: true 
 });
 
-// Enhanced status calculation based on timing
-// In CTF.js - Fix the calculateStatus method
-ctfSchema.methods.calculateStatus = function() {
+// ==========================
+// IST TIME HELPER FUNCTIONS
+// ==========================
+
+// Get current IST time
+ctfSchema.methods.getCurrentIST = function() {
   const now = new Date();
+  const istOffset = 5.5 * 60 * 60 * 1000; // IST is UTC+5:30
+  return new Date(now.getTime() + istOffset);
+};
+
+// Get current IST time string (HH:MM format)
+ctfSchema.methods.getCurrentISTString = function() {
+  const istTime = this.getCurrentIST();
+  return `${istTime.getUTCHours().toString().padStart(2, '0')}:${istTime.getUTCMinutes().toString().padStart(2, '0')}`;
+};
+
+// ==========================
+// CORE CTF STATUS METHODS
+// ==========================
+
+// Check if CTF is currently active based on IST time
+ctfSchema.methods.isCurrentlyActive = function() {
+  const istTime = this.getCurrentIST();
+  const currentIST = this.getCurrentISTString();
   
-  console.log('🔍 CTF Status Calculation:', {
+  console.log('🔍 Backend Active Hours Check (IST):', {
     title: this.title,
-    now: now.toISOString(),
-    currentTime: now.toTimeString().slice(0, 8),
+    startTime: this.activeHours.startTime,
+    endTime: this.activeHours.endTime,
+    currentIST: istTime.toISOString(),
+    currentISTTime: currentIST,
+    timezone: this.activeHours.timezone
+  });
+
+  const [startHours, startMinutes] = this.activeHours.startTime.split(':').map(Number);
+  const [endHours, endMinutes] = this.activeHours.endTime.split(':').map(Number);
+
+  // Use IST time for comparison
+  const currentMinutes = istTime.getUTCHours() * 60 + istTime.getUTCMinutes();
+  const startMinutesTotal = startHours * 60 + startMinutes;
+  const endMinutesTotal = endHours * 60 + endMinutes;
+
+  console.log('📊 IST Time Comparison:', {
+    currentMinutes,
+    startMinutesTotal,
+    endMinutesTotal,
+    currentISTTime: currentIST
+  });
+
+  // Handle case where active hours cross midnight
+  let isActive;
+  if (endMinutesTotal < startMinutesTotal) {
+    // Active hours cross midnight (e.g., 22:00 - 06:00)
+    isActive = currentMinutes >= startMinutesTotal || currentMinutes <= endMinutesTotal;
+  } else {
+    // Normal case (e.g., 02:00 - 18:00)
+    isActive = currentMinutes >= startMinutesTotal && currentMinutes <= endMinutesTotal;
+  }
+
+  console.log('✅ Backend Active Status (IST):', isActive);
+  return isActive;
+};
+
+// Calculate overall CTF status
+ctfSchema.methods.calculateStatus = function() {
+  const currentIST = this.getCurrentISTString();
+  
+  console.log('🔍 CTF Status Calculation (IST):', {
+    title: this.title,
+    currentIST: currentIST,
     startTime: this.activeHours.startTime,
     endTime: this.activeHours.endTime,
     isVisible: this.isVisible,
-    isPublished: this.isPublished
+    isPublished: this.isPublished,
+    timezone: 'Asia/Kolkata'
   });
   
   // If CTF is manually set to inactive or not published
@@ -160,60 +227,46 @@ ctfSchema.methods.calculateStatus = function() {
     return 'inactive';
   }
   
-  // Check if within active hours
+  // Check overall schedule dates (using IST)
+  const now = new Date();
+  const startDate = new Date(this.schedule.startDate);
+  const endDate = new Date(this.schedule.endDate);
+  
+  if (now < startDate) {
+    console.log('⏳ CTF is upcoming');
+    return 'upcoming';
+  }
+  
+  if (now > endDate) {
+    console.log('🏁 CTF has ended');
+    return 'ended';
+  }
+  
+  // Check if within active hours using IST
   const isActive = this.isCurrentlyActive();
   
   if (isActive) {
-    console.log('✅ CTF is active (within active hours)');
+    console.log('✅ CTF is active (within IST active hours)');
     return 'active';
   } else {
-    console.log('⏸️ CTF is inactive (outside active hours)');
+    console.log('⏸️ CTF is inactive (outside IST active hours)');
     return 'inactive';
   }
 };
 
-// Fix the isCurrentlyActive method
-ctfSchema.methods.isCurrentlyActive = function() {
-  const now = new Date();
-  
-  console.log('🔍 Backend Active Hours Check:', {
-    startTime: this.activeHours.startTime,
-    endTime: this.activeHours.endTime,
-    currentTime: now.toTimeString(),
-    currentHours24: now.getHours(),
-    currentMinutes: now.getMinutes()
-  });
-
-  const [startHours, startMinutes] = this.activeHours.startTime.split(':').map(Number);
-  const [endHours, endMinutes] = this.activeHours.endTime.split(':').map(Number);
-
-  const currentMinutes = now.getHours() * 60 + now.getMinutes();
-  const startMinutesTotal = startHours * 60 + startMinutes;
-  const endMinutesTotal = endHours * 60 + endMinutes;
-
-  console.log('📊 Backend Time Comparison:', {
-    currentMinutes,
-    startMinutesTotal,
-    endMinutesTotal,
-    currentTime24: `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
-  });
-
-  // Handle case where active hours cross midnight
-  let isActive;
-  if (endMinutesTotal < startMinutesTotal) {
-    // Active hours cross midnight (e.g., 22:00 - 06:00)
-    isActive = currentMinutes >= startMinutesTotal || currentMinutes <= endMinutesTotal;
-  } else {
-    // Normal case (e.g., 02:00 - 18:00)
-    isActive = currentMinutes >= startMinutesTotal && currentMinutes <= endMinutesTotal;
-  }
-
-  console.log('✅ Backend Active Status:', isActive);
-  return isActive;
-};
-
-// In CTF.js - Fix the canSubmit method
+// Check if user can submit to this CTF
 ctfSchema.methods.canSubmit = function() {
+  const currentIST = this.getCurrentISTString();
+  
+  console.log('🔍 canSubmit Check (IST):', {
+    title: this.title,
+    isVisible: this.isVisible,
+    isPublished: this.isPublished,
+    status: this.status,
+    isCurrentlyActive: this.isCurrentlyActive(),
+    currentIST: currentIST
+  });
+
   // Check if CTF is visible, published, and active
   if (!this.isVisible || !this.isPublished) {
     console.log('❌ Cannot submit: CTF not visible or not published');
@@ -226,117 +279,164 @@ ctfSchema.methods.canSubmit = function() {
     return false;
   }
 
-  // Then check active hours
+  // Then check active hours using IST
   const isActive = this.isCurrentlyActive();
   console.log('✅ Backend canSubmit result:', isActive);
   return isActive;
 };
 
-// Pre-save middleware to auto-calculate status
-ctfSchema.pre('save', function(next) {
-  console.log('💾 Pre-save middleware triggered for:', this.title);
+// ==========================
+// PARTICIPANT MANAGEMENT
+// ==========================
+
+// Add participant to CTF
+ctfSchema.methods.addParticipant = function(userId) {
+  const existingParticipant = this.participants.find(
+    p => p.user.toString() === userId.toString()
+  );
   
-  // Always calculate status, but respect manual inactive setting
-  const newStatus = this.calculateStatus();
-  
-  // Only update status if it's different and CTF is visible
-  if (this.status !== newStatus) {
-    console.log('🔄 Status changed:', {
-      from: this.status,
-      to: newStatus,
-      isVisible: this.isVisible
+  if (!existingParticipant) {
+    this.participants.push({
+      user: userId,
+      joinedAt: new Date(),
+      attempts: 0,
+      isCorrect: false,
+      pointsEarned: 0,
+      hasPendingSubmission: false
     });
-    this.status = newStatus;
+    
+    console.log('✅ Participant added to CTF:', {
+      ctfId: this._id,
+      ctfTitle: this.title,
+      userId: userId,
+      totalParticipants: this.participants.length,
+      joinedAt: new Date().toISOString()
+    });
   } else {
-    console.log('✅ Status unchanged:', this.status);
+    console.log('ℹ️ User already participant:', {
+      ctfId: this._id,
+      userId: userId
+    });
   }
   
-  next();
-});
-// In CTF.js - Fix the isCurrentlyActive method
-ctfSchema.methods.isCurrentlyActive = function() {
-  const now = new Date();
+  return this;
+};
+
+// Check if user has pending submission
+ctfSchema.methods.hasPendingSubmission = function(userId) {
+  return this.participants.some(p => 
+    p.user.toString() === userId.toString() && 
+    p.hasPendingSubmission
+  );
+};
+
+// Update participant submission status
+ctfSchema.methods.updateParticipantSubmissionStatus = function(userId, hasPending) {
+  const participant = this.participants.find(p => 
+    p.user.toString() === userId.toString()
+  );
   
-  console.log('🔍 Backend Active Hours Check:', {
-    startTime: this.activeHours.startTime,
-    endTime: this.activeHours.endTime,
-    currentTime: now.toTimeString(),
-    currentHours24: now.getHours(),
-    currentMinutes: now.getMinutes(),
-    timezone: this.activeHours.timezone || 'UTC'
+  if (participant) {
+    participant.hasPendingSubmission = hasPending;
+    console.log('📝 Updated participant submission status:', {
+      ctfId: this._id,
+      userId: userId,
+      hasPendingSubmission: hasPending
+    });
+  }
+  
+  return this;
+};
+
+// ==========================
+// SUBMISSION MANAGEMENT
+// ==========================
+
+// Submit flag with IST validation
+ctfSchema.methods.submitFlag = function(userId, flag, screenshot = null) {
+  const participant = this.participants.find(
+    p => p.user.toString() === userId.toString()
+  );
+  
+  if (!participant) {
+    throw new Error('User is not a participant of this CTF');
+  }
+  
+  const currentIST = this.getCurrentISTString();
+  
+  // Enhanced validation with IST logging
+  console.log('🔍 submitFlag - Validation Check (IST):', {
+    title: this.title,
+    isVisible: this.isVisible,
+    isPublished: this.isPublished,
+    status: this.status,
+    isCurrentlyActive: this.isCurrentlyActive(),
+    canSubmit: this.canSubmit(),
+    activeHours: this.activeHours,
+    currentIST: currentIST,
+    timezone: 'Asia/Kolkata'
   });
 
-  const [startHours, startMinutes] = this.activeHours.startTime.split(':').map(Number);
-  const [endHours, endMinutes] = this.activeHours.endTime.split(':').map(Number);
+  // Direct validation instead of relying on canSubmit()
+  if (!this.isVisible || !this.isPublished) {
+    throw new Error('CTF is not available for submissions');
+  }
 
-  const currentMinutes = now.getHours() * 60 + now.getMinutes();
-  const startMinutesTotal = startHours * 60 + startMinutes;
-  const endMinutesTotal = endHours * 60 + endMinutes;
+  if (this.status?.toLowerCase() !== 'active') {
+    throw new Error(`CTF is ${this.status}. Submissions are not allowed.`);
+  }
 
-  console.log('📊 Backend Time Comparison:', {
-    currentMinutes,
-    startMinutesTotal,
-    endMinutesTotal,
-    currentTime24: `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
+  if (!this.isCurrentlyActive()) {
+    throw new Error(`CTF is only active between ${this.activeHours.startTime} - ${this.activeHours.endTime} IST. Current time: ${currentIST} IST`);
+  }
+
+  if (participant.attempts >= this.maxAttempts && !this.rules.allowMultipleSubmissions) {
+    throw new Error('Maximum attempts reached');
+  }
+  
+  participant.attempts += 1;
+  participant.submittedAt = new Date();
+  
+  // Compare with the actual flag
+  const isCorrect = flag === this.flag;
+  
+  if (isCorrect) {
+    participant.isCorrect = true;
+    participant.pointsEarned = this.points;
+    this.correctSubmissions += 1;
+  }
+  
+  this.totalSubmissions += 1;
+  
+  console.log('✅ Flag submission result:', {
+    ctfId: this._id,
+    userId: userId,
+    isCorrect: isCorrect,
+    attempts: participant.attempts,
+    currentIST: currentIST
   });
-
-  // Handle case where active hours cross midnight
-  let isActive;
-  if (endMinutesTotal < startMinutesTotal) {
-    // Active hours cross midnight (e.g., 22:00 - 06:00)
-    isActive = currentMinutes >= startMinutesTotal || currentMinutes <= endMinutesTotal;
-  } else {
-    // Normal case (e.g., 02:00 - 18:00)
-    isActive = currentMinutes >= startMinutesTotal && currentMinutes <= endMinutesTotal;
-  }
-
-  console.log('✅ Backend Active Status:', isActive);
-  return isActive;
+  
+  return {
+    isCorrect,
+    points: isCorrect ? this.points : 0,
+    attempts: participant.attempts,
+    maxAttempts: this.maxAttempts
+  };
 };
 
-// Update canSubmit method
-ctfSchema.methods.canSubmit = function() {
-  // Check if CTF is visible, published, and active
-  if (!this.isVisible || !this.isPublished) {
-    console.log('❌ Cannot submit: CTF not visible or not published');
-    return false;
-  }
-
-  // Use backend status as primary check
-  if (this.status?.toLowerCase() !== 'active') {
-    console.log('❌ Cannot submit: Backend status is', this.status);
-    return false;
-  }
-
-  // Then check active hours
-  const isActive = this.isCurrentlyActive();
-  console.log('✅ Backend canSubmit result:', isActive);
-  return isActive;
-};
-
-ctfSchema.methods.canSubmit = function() {
-  // Check if CTF is visible, published, and active
-  if (!this.isVisible || !this.isPublished) {
-    return false;
-  }
-
-  // Use backend status as primary check
-  if (this.status?.toLowerCase() !== 'active') {
-    return false;
-  }
-
-  // Then check active hours
-  return this.isCurrentlyActive();
-};
-
-// In your CTF model (models/CTF.js) - Add these methods:
+// ==========================
+// ADMIN MANAGEMENT METHODS
+// ==========================
 
 // Force status update (admin override)
 ctfSchema.methods.forceStatusUpdate = function(status) {
-  console.log('🔄 Force status update:', {
+  const currentIST = this.getCurrentISTString();
+  
+  console.log('🔄 Force status update (IST):', {
     from: this.status,
     to: status,
-    title: this.title
+    title: this.title,
+    currentIST: currentIST
   });
   
   this.status = status;
@@ -354,19 +454,50 @@ ctfSchema.methods.forceStatusUpdate = function(status) {
 
 // Toggle activation with proper status calculation
 ctfSchema.methods.toggleActivation = async function() {
+  const currentIST = this.getCurrentISTString();
+  
   this.isVisible = !this.isVisible;
   
   if (this.isVisible) {
-    // When activating, recalculate status based on timing
+    // When activating, recalculate status based on IST timing
     this.status = this.calculateStatus();
   } else {
     // When deactivating, set to inactive
     this.status = 'inactive';
   }
   
+  console.log('🔧 Toggle activation (IST):', {
+    title: this.title,
+    isVisible: this.isVisible,
+    newStatus: this.status,
+    currentIST: currentIST
+  });
+  
   await this.save();
   return this;
 };
+
+// Update CTF status
+ctfSchema.methods.updateStatus = async function() {
+  const newStatus = this.calculateStatus();
+  
+  if (this.status !== newStatus) {
+    console.log('🔄 Auto-updating CTF status:', {
+      title: this.title,
+      from: this.status,
+      to: newStatus,
+      currentIST: this.getCurrentISTString()
+    });
+    this.status = newStatus;
+    await this.save();
+  }
+  
+  return this;
+};
+
+// ==========================
+// ANALYTICS METHODS
+// ==========================
 
 // Enhanced analytics method
 ctfSchema.methods.getAnalytics = function() {
@@ -399,9 +530,15 @@ ctfSchema.methods.getAnalytics = function() {
     })),
     timing: {
       activeHours: this.activeHours,
-      schedule: this.schedule,
+      schedule: {
+        startDate: this.schedule.startDate,
+        endDate: this.schedule.endDate,
+        startDateIST: this.schedule.startDate.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+        endDateIST: this.schedule.endDate.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
+      },
       currentStatus: this.isCurrentlyActive() ? 'Active' : 'Inactive',
-      nextActive: this.calculateNextActivePeriod?.() || 'Not scheduled'
+      currentIST: this.getCurrentISTString(),
+      timezone: 'Asia/Kolkata'
     },
     performance: {
       completionRate: participants.length > 0 ? 
@@ -411,7 +548,7 @@ ctfSchema.methods.getAnalytics = function() {
   };
 };
 
-// Calculate average solve time (optional enhancement)
+// Calculate average solve time
 ctfSchema.methods.calculateAverageSolveTime = function() {
   const correctParticipants = this.participants.filter(p => p.isCorrect && p.joinedAt && p.submittedAt);
   
@@ -431,128 +568,12 @@ ctfSchema.methods.calculateAverageSolveTime = function() {
   }
   return `${minutes}m`;
 };
-// Check if user has pending submission for this CTF
-ctfSchema.methods.hasPendingSubmission = function(userId) {
-  return this.participants.some(p => 
-    p.user.toString() === userId.toString() && 
-    p.hasPendingSubmission
-  );
-};
 
-// Update participant submission status
-ctfSchema.methods.updateParticipantSubmissionStatus = function(userId, hasPending) {
-  const participant = this.participants.find(p => 
-    p.user.toString() === userId.toString()
-  );
-  
-  if (participant) {
-    participant.hasPendingSubmission = hasPending;
-  }
-  
-  return this;
-};
+// ==========================
+// STATIC METHODS
+// ==========================
 
-// Update CTF status
-ctfSchema.methods.updateStatus = async function() {
-  const newStatus = this.calculateStatus();
-  
-  if (this.status !== newStatus) {
-    this.status = newStatus;
-    await this.save();
-  }
-  
-  return this;
-};
-
-
-
-// Check if user can submit
-ctfSchema.methods.canSubmit = function() {
-  const now = new Date();
-  return this.isVisible && 
-         now >= this.schedule.startDate && 
-         now <= this.schedule.endDate && 
-         this.isCurrentlyActive();
-};
-
-// Add participant to CTF
-ctfSchema.methods.addParticipant = function(userId) {
-  const existingParticipant = this.participants.find(
-    p => p.user.toString() === userId.toString()
-  );
-  
-  if (!existingParticipant) {
-    this.participants.push({
-      user: userId,
-      joinedAt: new Date()
-    });
-  }
-  
-  return this;
-};
-
-// In CTF.js - Fix the submitFlag method
-ctfSchema.methods.submitFlag = function(userId, flag, screenshot = null) {
-  const participant = this.participants.find(
-    p => p.user.toString() === userId.toString()
-  );
-  
-  if (!participant) {
-    throw new Error('User is not a participant of this CTF');
-  }
-  
-  // Enhanced validation with detailed logging
-  console.log('🔍 submitFlag - Validation Check:', {
-    title: this.title,
-    isVisible: this.isVisible,
-    isPublished: this.isPublished,
-    status: this.status,
-    isCurrentlyActive: this.isCurrentlyActive(),
-    canSubmit: this.canSubmit(),
-    activeHours: this.activeHours,
-    currentTime: new Date().toLocaleTimeString()
-  });
-
-  // Direct validation instead of relying on canSubmit()
-  if (!this.isVisible || !this.isPublished) {
-    throw new Error('CTF is not available for submissions');
-  }
-
-  if (this.status?.toLowerCase() !== 'active') {
-    throw new Error(`CTF is ${this.status}. Submissions are not allowed.`);
-  }
-
-  if (!this.isCurrentlyActive()) {
-    throw new Error(`CTF is only active between ${this.activeHours.startTime} - ${this.activeHours.endTime}`);
-  }
-
-  if (participant.attempts >= this.maxAttempts && !this.rules.allowMultipleSubmissions) {
-    throw new Error('Maximum attempts reached');
-  }
-  
-  participant.attempts += 1;
-  participant.submittedAt = new Date();
-  
-  // Compare with the actual flag
-  const isCorrect = flag === this.flag;
-  
-  if (isCorrect) {
-    participant.isCorrect = true;
-    participant.pointsEarned = this.points;
-    this.correctSubmissions += 1;
-  }
-  
-  this.totalSubmissions += 1;
-  
-  return {
-    isCorrect,
-    points: isCorrect ? this.points : 0,
-    attempts: participant.attempts,
-    maxAttempts: this.maxAttempts
-  };
-};
-
-// Static method to update all CTF statuses
+// Static method to update all CTF statuses using IST
 ctfSchema.statics.updateAllStatuses = async function() {
   const ctfs = await this.find();
   let updated = 0;
@@ -566,23 +587,56 @@ ctfSchema.statics.updateAllStatuses = async function() {
     }
   }
   
+  console.log('🔄 Batch status update completed:', {
+    totalCTFs: ctfs.length,
+    updated: updated,
+    currentIST: new Date(new Date().getTime() + 5.5 * 60 * 60 * 1000).toISOString()
+  });
+  
   return { updated };
 };
 
-// Pre-save middleware to auto-calculate status
+// ==========================
+// MIDDLEWARE
+// ==========================
+
+// Pre-save middleware to auto-calculate status with IST
 ctfSchema.pre('save', function(next) {
-  // Only auto-calculate if not manually set to inactive
-  if (this.isVisible) {
-    this.status = this.calculateStatus();
+  const currentIST = this.getCurrentISTString();
+  
+  console.log('💾 Pre-save middleware triggered (IST):', {
+    title: this.title,
+    currentIST: currentIST
+  });
+  
+  // Always calculate status, but respect manual inactive setting
+  const newStatus = this.calculateStatus();
+  
+  // Only update status if it's different and CTF is visible
+  if (this.status !== newStatus) {
+    console.log('🔄 Status changed:', {
+      from: this.status,
+      to: newStatus,
+      isVisible: this.isVisible,
+      currentIST: currentIST
+    });
+    this.status = newStatus;
+  } else {
+    console.log('✅ Status unchanged:', this.status);
   }
+  
   next();
 });
 
-// Indexes for better performance
+// ==========================
+// INDEXES
+// ==========================
+
 ctfSchema.index({ 'schedule.startDate': 1, 'schedule.endDate': 1 });
 ctfSchema.index({ status: 1 });
 ctfSchema.index({ isVisible: 1, isPublished: 1 });
 ctfSchema.index({ category: 1 });
 ctfSchema.index({ difficulty: 1 });
+ctfSchema.index({ 'participants.user': 1 });
 
 module.exports = mongoose.model('CTF', ctfSchema);
