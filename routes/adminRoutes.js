@@ -2500,4 +2500,356 @@ router.get('/submissions/:submissionId/screenshot', requireAdmin, async (req, re
 });
 
 
+// ==========================
+// SUBMISSION ANALYTICS ROUTES
+// ==========================
+
+// Get comprehensive submission analytics
+router.get('/analytics/submissions', requireAdmin, async (req, res) => {
+  try {
+    const { timeRange = '7d' } = req.query;
+    
+    // Calculate date range
+    let startDate;
+    const endDate = new Date();
+    
+    switch (timeRange) {
+      case '24h':
+        startDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        break;
+      case '7d':
+        startDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        break;
+      case '30d':
+        startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        break;
+      default:
+        startDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    }
+
+    // Get submission statistics
+    const [statusStats, dailyTrend, categoryStats, userStats] = await Promise.all([
+      // Status distribution
+      Submission.aggregate([
+        {
+          $match: {
+            submittedAt: { $gte: startDate, $lte: endDate }
+          }
+        },
+        {
+          $group: {
+            _id: '$submissionStatus',
+            count: { $sum: 1 }
+          }
+        }
+      ]),
+      
+      // Daily trend for the last 7 days
+      Submission.aggregate([
+        {
+          $match: {
+            submittedAt: { 
+              $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+              $lte: endDate
+            }
+          }
+        },
+        {
+          $group: {
+            _id: {
+              $dateToString: {
+                format: '%Y-%m-%d',
+                date: '$submittedAt'
+              }
+            },
+            total: { $sum: 1 },
+            approved: {
+              $sum: { $cond: [{ $eq: ['$submissionStatus', 'approved'] }, 1, 0] }
+            },
+            pending: {
+              $sum: { $cond: [{ $eq: ['$submissionStatus', 'pending'] }, 1, 0] }
+            },
+            rejected: {
+              $sum: { $cond: [{ $eq: ['$submissionStatus', 'rejected'] }, 1, 0] }
+            }
+          }
+        },
+        { $sort: { _id: 1 } }
+      ]),
+      
+      // Category performance
+      Submission.aggregate([
+        {
+          $match: {
+            submittedAt: { $gte: startDate, $lte: endDate },
+            submissionStatus: 'approved'
+          }
+        },
+        {
+          $lookup: {
+            from: 'ctfs',
+            localField: 'ctf',
+            foreignField: '_id',
+            as: 'ctfInfo'
+          }
+        },
+        { $unwind: '$ctfInfo' },
+        {
+          $group: {
+            _id: '$ctfInfo.category',
+            totalSolved: { $sum: 1 },
+            totalPoints: { $sum: '$points' },
+            averagePoints: { $avg: '$points' }
+          }
+        },
+        { $sort: { totalSolved: -1 } }
+      ]),
+      
+      // User submission statistics
+      Submission.aggregate([
+        {
+          $match: {
+            submittedAt: { $gte: startDate, $lte: endDate }
+          }
+        },
+        {
+          $group: {
+            _id: '$user',
+            totalSubmissions: { $sum: 1 },
+            approvedSubmissions: {
+              $sum: { $cond: [{ $eq: ['$submissionStatus', 'approved'] }, 1, 0] }
+            },
+            totalPoints: { $sum: '$points' }
+          }
+        },
+        {
+          $lookup: {
+            from: 'users',
+            localField: '_id',
+            foreignField: '_id',
+            as: 'userInfo'
+          }
+        },
+        { $unwind: '$userInfo' },
+        {
+          $project: {
+            'userInfo.password': 0,
+            'userInfo.loginHistory': 0
+          }
+        },
+        { $sort: { totalPoints: -1 } },
+        { $limit: 10 }
+      ])
+    ]);
+
+    // Get total counts
+    const totalStats = await Submission.aggregate([
+      {
+        $match: {
+          submittedAt: { $gte: startDate, $lte: endDate }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalSubmissions: { $sum: 1 },
+          approvedSubmissions: {
+            $sum: { $cond: [{ $eq: ['$submissionStatus', 'approved'] }, 1, 0] }
+          },
+          pendingSubmissions: {
+            $sum: { $cond: [{ $eq: ['$submissionStatus', 'pending'] }, 1, 0] }
+          },
+          rejectedSubmissions: {
+            $sum: { $cond: [{ $eq: ['$submissionStatus', 'rejected'] }, 1, 0] }
+          },
+          totalPoints: { $sum: '$points' },
+          averagePoints: { $avg: '$points' }
+        }
+      }
+    ]);
+
+    // Get recent submissions for activity feed
+    const recentSubmissions = await Submission.find({
+      submittedAt: { $gte: startDate, $lte: endDate }
+    })
+    .populate('user', 'fullName email')
+    .populate('ctf', 'title category points')
+    .populate('reviewedBy', 'fullName email')
+    .sort({ submittedAt: -1 })
+    .limit(20)
+    .select('user ctf submissionStatus points submittedAt reviewedAt reviewedBy');
+
+    const analytics = {
+      totals: totalStats[0] || {
+        totalSubmissions: 0,
+        approvedSubmissions: 0,
+        pendingSubmissions: 0,
+        rejectedSubmissions: 0,
+        totalPoints: 0,
+        averagePoints: 0
+      },
+      statusDistribution: statusStats,
+      dailyTrend: dailyTrend,
+      categoryPerformance: categoryStats,
+      topUsers: userStats,
+      recentSubmissions: recentSubmissions,
+      timeRange: {
+        start: startDate,
+        end: endDate,
+        label: timeRange
+      }
+    };
+
+    res.json({
+      message: 'Submission analytics retrieved successfully',
+      analytics
+    });
+  } catch (error) {
+    console.error('Get submission analytics error:', error);
+    res.status(500).json({ error: 'Failed to fetch submission analytics' });
+  }
+});
+
+// Enhanced submission statistics with proper error handling
+router.get('/submissions/stats', requireAdmin, async (req, res) => {
+  try {
+    const { timeRange = '7d' } = req.query;
+    
+    // Validate timeRange parameter
+    const validTimeRanges = ['24h', '7d', '30d', 'all'];
+    if (!validTimeRanges.includes(timeRange)) {
+      return res.status(400).json({ 
+        error: 'Invalid timeRange parameter', 
+        validValues: validTimeRanges 
+      });
+    }
+    
+    let dateFilter = {};
+    const now = new Date();
+    
+    if (timeRange !== 'all') {
+      let days = 7; // default
+      switch (timeRange) {
+        case '24h':
+          days = 1;
+          break;
+        case '30d':
+          days = 30;
+          break;
+      }
+      dateFilter.submittedAt = { $gte: new Date(now - days * 24 * 60 * 60 * 1000) };
+    }
+
+    const [statusStats, totalStats, dailyStats, ctfStats] = await Promise.all([
+      // Status distribution
+      Submission.aggregate([
+        { $match: dateFilter },
+        {
+          $group: {
+            _id: '$submissionStatus',
+            count: { $sum: 1 }
+          }
+        }
+      ]),
+      
+      // Total statistics
+      Submission.aggregate([
+        { $match: dateFilter },
+        {
+          $group: {
+            _id: null,
+            totalSubmissions: { $sum: 1 },
+            pendingSubmissions: {
+              $sum: { $cond: [{ $eq: ['$submissionStatus', 'pending'] }, 1, 0] }
+            },
+            approvedSubmissions: {
+              $sum: { $cond: [{ $eq: ['$submissionStatus', 'approved'] }, 1, 0] }
+            },
+            rejectedSubmissions: {
+              $sum: { $cond: [{ $eq: ['$submissionStatus', 'rejected'] }, 1, 0] }
+            },
+            totalPoints: { $sum: '$points' },
+            averagePoints: { $avg: '$points' }
+          }
+        }
+      ]),
+      
+      // Daily submissions for last 7 days
+      Submission.aggregate([
+        {
+          $match: {
+            submittedAt: { $gte: new Date(now - 7 * 24 * 60 * 60 * 1000) }
+          }
+        },
+        {
+          $group: {
+            _id: {
+              $dateToString: {
+                format: '%Y-%m-%d',
+                date: '$submittedAt'
+              }
+            },
+            count: { $sum: 1 },
+            approved: {
+              $sum: { $cond: [{ $eq: ['$submissionStatus', 'approved'] }, 1, 0] }
+            },
+            pending: {
+              $sum: { $cond: [{ $eq: ['$submissionStatus', 'pending'] }, 1, 0] }
+            }
+          }
+        },
+        { $sort: { _id: 1 } }
+      ]),
+      
+      // CTF-wise statistics
+      Submission.aggregate([
+        { $match: dateFilter },
+        {
+          $lookup: {
+            from: 'ctfs',
+            localField: 'ctf',
+            foreignField: '_id',
+            as: 'ctfInfo'
+          }
+        },
+        { $unwind: '$ctfInfo' },
+        {
+          $group: {
+            _id: '$ctfInfo.title',
+            totalSubmissions: { $sum: 1 },
+            approvedSubmissions: {
+              $sum: { $cond: [{ $eq: ['$submissionStatus', 'approved'] }, 1, 0] }
+            },
+            averagePoints: { $avg: '$points' }
+          }
+        },
+        { $sort: { totalSubmissions: -1 } },
+        { $limit: 10 }
+      ])
+    ]);
+
+    const stats = {
+      statusDistribution: statusStats,
+      totals: totalStats[0] || {
+        totalSubmissions: 0,
+        pendingSubmissions: 0,
+        approvedSubmissions: 0,
+        rejectedSubmissions: 0,
+        totalPoints: 0,
+        averagePoints: 0
+      },
+      dailyTrends: dailyStats,
+      topCTFs: ctfStats,
+      timeRange: timeRange
+    };
+
+    res.json(stats);
+  } catch (error) {
+    console.error('Get submission stats error:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch submission statistics',
+      details: error.message 
+    });
+  }
+});
 module.exports = { router, requireAdmin };
