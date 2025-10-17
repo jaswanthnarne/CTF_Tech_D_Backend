@@ -159,6 +159,11 @@ ctfSchema.methods.getCurrentISTString = function() {
   const istTime = this.getCurrentIST();
   return `${istTime.getUTCHours().toString().padStart(2, '0')}:${istTime.getUTCMinutes().toString().padStart(2, '0')}`;
 };
+// Convert date to IST
+const convertToIST = (date) => {
+  if (!date) return null;
+  return new Date(date.getTime() + (5.5 * 60 * 60 * 1000));
+};
 
 // ==========================
 // CORE CTF STATUS METHODS
@@ -166,23 +171,33 @@ ctfSchema.methods.getCurrentISTString = function() {
 
 // Check if CTF is currently active based on IST time
 ctfSchema.methods.isCurrentlyActive = function() {
-  const istTime = this.getCurrentIST();
-  const currentIST = this.getCurrentISTString();
+  const currentIST = getCurrentIST();
+  const currentISTString = getCurrentISTString();
   
   console.log('🔍 Backend Active Hours Check (IST):', {
     title: this.title,
     startTime: this.activeHours.startTime,
     endTime: this.activeHours.endTime,
-    currentIST: istTime.toISOString(),
-    currentISTTime: currentIST,
-    timezone: this.activeHours.timezone
+    currentIST: currentISTString,
+    scheduleStart: this.schedule.startDate,
+    scheduleEnd: this.schedule.endDate
   });
 
+  // First check if we're within the schedule dates
+  const scheduleStartIST = convertToIST(this.schedule.startDate);
+  const scheduleEndIST = convertToIST(this.schedule.endDate);
+  
+  if (currentIST < scheduleStartIST || currentIST > scheduleEndIST) {
+    console.log('❌ Outside schedule dates');
+    return false;
+  }
+
+  // Now check active hours
   const [startHours, startMinutes] = this.activeHours.startTime.split(':').map(Number);
   const [endHours, endMinutes] = this.activeHours.endTime.split(':').map(Number);
 
   // Use IST time for comparison
-  const currentMinutes = istTime.getUTCHours() * 60 + istTime.getUTCMinutes();
+  const currentMinutes = currentIST.getUTCHours() * 60 + currentIST.getUTCMinutes();
   const startMinutesTotal = startHours * 60 + startMinutes;
   const endMinutesTotal = endHours * 60 + endMinutes;
 
@@ -190,7 +205,7 @@ ctfSchema.methods.isCurrentlyActive = function() {
     currentMinutes,
     startMinutesTotal,
     endMinutesTotal,
-    currentISTTime: currentIST
+    currentISTTime: currentISTString
   });
 
   // Handle case where active hours cross midnight
@@ -199,7 +214,7 @@ ctfSchema.methods.isCurrentlyActive = function() {
     // Active hours cross midnight (e.g., 22:00 - 06:00)
     isActive = currentMinutes >= startMinutesTotal || currentMinutes <= endMinutesTotal;
   } else {
-    // Normal case (e.g., 02:00 - 18:00)
+    // Normal case (e.g., 09:00 - 18:00)
     isActive = currentMinutes >= startMinutesTotal && currentMinutes <= endMinutesTotal;
   }
 
@@ -207,10 +222,10 @@ ctfSchema.methods.isCurrentlyActive = function() {
   return isActive;
 };
 
-// Enhanced status calculation with better IST handling
+// Enhanced status calculation with proper IST handling
 ctfSchema.methods.calculateStatus = function() {
-  const currentIST = this.getCurrentIST();
-  const currentISTString = this.getCurrentISTString();
+  const currentIST = getCurrentIST();
+  const currentISTString = getCurrentISTString();
   
   console.log('🔍 Enhanced CTF Status Calculation (IST):', {
     title: this.title,
@@ -228,24 +243,28 @@ ctfSchema.methods.calculateStatus = function() {
     return 'inactive';
   }
   
+  // Convert schedule dates to IST for comparison
+  const scheduleStartIST = convertToIST(this.schedule.startDate);
+  const scheduleEndIST = convertToIST(this.schedule.endDate);
+  
   // Schedule date checks (using IST)
-  if (currentIST < this.schedule.startDate) {
+  if (currentIST < scheduleStartIST) {
     return 'upcoming';
   }
   
-  if (currentIST > this.schedule.endDate) {
+  if (currentIST > scheduleEndIST) {
     return 'ended';
   }
   
   // Active hours check with IST
   const isActiveHours = this.isCurrentlyActive();
   
-  return isActiveHours ? 'active' : 'inactive';
+  return isActiveHours ? 'active' : 'inactive_hours';
 };
 
 // Check if user can submit to this CTF
 ctfSchema.methods.canSubmit = function() {
-  const currentIST = this.getCurrentISTString();
+  const currentIST = getCurrentISTString();
   
   console.log('🔍 canSubmit Check (IST):', {
     title: this.title,
@@ -273,7 +292,6 @@ ctfSchema.methods.canSubmit = function() {
   console.log('✅ Backend canSubmit result:', isActive);
   return isActive;
 };
-
 // ==========================
 // PARTICIPANT MANAGEMENT
 // ==========================
