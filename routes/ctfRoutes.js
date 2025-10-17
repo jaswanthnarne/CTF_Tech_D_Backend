@@ -222,6 +222,51 @@ router.get('/leaderboard/global', async (req, res) => {
 // PROTECTED ROUTES (Require Auth)
 // ==========================
 
+
+// Helper function for CTF availability
+const getCTFAvailability = (ctf) => {
+  const currentIST = getCurrentISTString();
+  
+  if (!ctf.isVisible || !ctf.isPublished) {
+    return {
+      canJoin: false,
+      message: 'CTF is not available',
+      details: 'This CTF is currently not published or visible'
+    };
+  }
+
+  if (ctf.status === 'upcoming') {
+    const startTime = ctf.schedule.startDate.toLocaleString('en-IN', { 
+      timeZone: 'Asia/Kolkata' 
+    });
+    return {
+      canJoin: false,
+      message: 'CTF has not started yet',
+      details: `Starts at: ${startTime} IST`,
+      nextAvailable: startTime
+    };
+  }
+
+  if (ctf.status === 'ended') {
+    return {
+      canJoin: false,
+      message: 'CTF has ended',
+      details: 'This CTF is no longer active'
+    };
+  }
+
+  if (ctf.status === 'active' && !ctf.isCurrentlyActive()) {
+    return {
+      canJoin: false,
+      message: 'CTF is outside active hours',
+      details: `Active hours: ${ctf.activeHours.startTime} - ${ctf.activeHours.endTime} IST`,
+      nextAvailable: `Tomorrow at ${ctf.activeHours.startTime} IST`
+    };
+  }
+
+  return { canJoin: true };
+};
+
 // Join CTF with IST validation
 router.post('/ctfs/:id/join', requireAuth, async (req, res) => {
   try {
@@ -238,18 +283,16 @@ router.post('/ctfs/:id/join', requireAuth, async (req, res) => {
     }
 
     // Get current IST time for logging and validation
-    const currentIST = getCurrentISTString();
-
-    console.log('🔍 Join CTF Validation (IST):', {
-      title: ctf.title,
-      isVisible: ctf.isVisible,
-      isPublished: ctf.isPublished,
-      status: ctf.status,
-      isCurrentlyActive: ctf.isCurrentlyActive(),
-      currentIST: currentIST,
-      activeHours: ctf.activeHours,
-      timezone: ctf.activeHours.timezone
-    });
+    // Enhanced status check
+    const statusCheck = this.getCTFAvailability(ctf);
+    
+    if (!statusCheck.canJoin) {
+      return res.status(403).json({
+        error: statusCheck.message,
+        details: statusCheck.details,
+        nextAvailable: statusCheck.nextAvailable
+      });
+    }
 
     // Enhanced validation for joining
     if (!ctf.isVisible || !ctf.isPublished) {
@@ -294,7 +337,7 @@ router.post('/ctfs/:id/join', requireAuth, async (req, res) => {
     }
 
     // Add participant to CTF
-    ctf.addParticipant(userId);
+    ctf.addparticipants(userId);
     await ctf.save();
 
     console.log('✅ CTF Joined Successfully (IST):', {

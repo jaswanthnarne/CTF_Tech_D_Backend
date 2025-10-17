@@ -207,51 +207,40 @@ ctfSchema.methods.isCurrentlyActive = function() {
   return isActive;
 };
 
-// Calculate overall CTF status
+// Enhanced status calculation with better IST handling
 ctfSchema.methods.calculateStatus = function() {
-  const currentIST = this.getCurrentISTString();
+  const currentIST = this.getCurrentIST();
+  const currentISTString = this.getCurrentISTString();
   
-  console.log('🔍 CTF Status Calculation (IST):', {
+  console.log('🔍 Enhanced CTF Status Calculation (IST):', {
     title: this.title,
-    currentIST: currentIST,
+    currentIST: currentISTString,
     startTime: this.activeHours.startTime,
     endTime: this.activeHours.endTime,
+    scheduleStart: this.schedule.startDate,
+    scheduleEnd: this.schedule.endDate,
     isVisible: this.isVisible,
-    isPublished: this.isPublished,
-    timezone: 'Asia/Kolkata'
+    isPublished: this.isPublished
   });
   
-  // If CTF is manually set to inactive or not published
+  // Manual override checks first
   if (!this.isVisible || !this.isPublished) {
-    console.log('❌ CTF is manually invisible or not published');
     return 'inactive';
   }
   
-  // Check overall schedule dates (using IST)
-  const now = new Date();
-  const startDate = new Date(this.schedule.startDate);
-  const endDate = new Date(this.schedule.endDate);
-  
-  if (now < startDate) {
-    console.log('⏳ CTF is upcoming');
+  // Schedule date checks (using IST)
+  if (currentIST < this.schedule.startDate) {
     return 'upcoming';
   }
   
-  if (now > endDate) {
-    console.log('🏁 CTF has ended');
+  if (currentIST > this.schedule.endDate) {
     return 'ended';
   }
   
-  // Check if within active hours using IST
-  const isActive = this.isCurrentlyActive();
+  // Active hours check with IST
+  const isActiveHours = this.isCurrentlyActive();
   
-  if (isActive) {
-    console.log('✅ CTF is active (within IST active hours)');
-    return 'active';
-  } else {
-    console.log('⏸️ CTF is inactive (outside IST active hours)');
-    return 'inactive';
-  }
+  return isActiveHours ? 'active' : 'inactive';
 };
 
 // Check if user can submit to this CTF
@@ -495,6 +484,46 @@ ctfSchema.methods.updateStatus = async function() {
   return this;
 };
 
+
+
+// CTF lifecycle automation
+ctfSchema.statics.manageCTFLifecycle = async function() {
+  const now = new Date();
+  const ctfs = await this.find({
+    $or: [
+      { 'schedule.startDate': { $lte: now } },
+      { 'schedule.endDate': { $lte: now } },
+      { status: { $in: ['active', 'upcoming'] } }
+    ]
+  });
+
+  let updated = 0;
+  let ended = 0;
+
+  for (const ctf of ctfs) {
+    const oldStatus = ctf.status;
+    const newStatus = ctf.calculateStatus();
+
+    if (oldStatus !== newStatus) {
+      ctf.status = newStatus;
+      
+      // Log status changes
+      if (newStatus === 'ended') {
+        console.log('🏁 CTF ended:', {
+          title: ctf.title,
+          endedAt: new Date().toISOString(),
+          IST: getCurrentISTString()
+        });
+        ended++;
+      }
+      
+      await ctf.save();
+      updated++;
+    }
+  }
+
+  return { updated, ended };
+};
 // ==========================
 // ANALYTICS METHODS
 // ==========================

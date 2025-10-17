@@ -12,25 +12,7 @@ const sendMail = require('../utils/sendMail');
 
 const router = express.Router();
 
-// ==========================
-// IST TIME HELPER FUNCTIONS
-// ==========================
-
-const getCurrentIST = () => {
-  const now = new Date();
-  const istOffset = 5.5 * 60 * 60 * 1000; // IST is UTC+5:30
-  return new Date(now.getTime() + istOffset);
-};
-
-const getCurrentISTString = () => {
-  const istTime = getCurrentIST();
-  return `${istTime.getUTCHours().toString().padStart(2, '0')}:${istTime.getUTCMinutes().toString().padStart(2, '0')}`;
-};
-
-// ==========================
-// ADMIN AUTHENTICATION MIDDLEWARE
-// ==========================
-
+// Middleware to protect admin routes
 const requireAdmin = async (req, res, next) => {
   try {
     console.log('🔐 Admin auth middleware checking authentication...');
@@ -41,6 +23,8 @@ const requireAdmin = async (req, res, next) => {
                 req.headers.Authorization?.replace('Bearer ', '') ||
                 req.query?.token;
 
+    // console.log('📡 Token present:', !!token);
+    
     if (!token) {
       console.log('❌ No token found - authentication required');
       return res.status(401).json({ error: 'Authentication required' });
@@ -135,7 +119,7 @@ const requireAdmin = async (req, res, next) => {
 };
 
 // ==========================
-// ADMIN MANAGEMENT
+// Admin Management
 // ==========================
 
 // Register first admin
@@ -255,9 +239,7 @@ router.post('/login', [
     res.json({ 
       message: 'Login successful', 
       admin: adminResponse, 
-      token,
-      currentIST: getCurrentISTString(),
-      timezone: 'Asia/Kolkata'
+      token 
     });
   } catch (error) {
     console.error('Admin login error:', error);
@@ -273,9 +255,7 @@ router.get('/profile', requireAdmin, async (req, res) => {
     
     res.json({
       message: 'Admin profile retrieved successfully',
-      admin,
-      currentIST: getCurrentISTString(),
-      timezone: 'Asia/Kolkata'
+      admin
     });
   } catch (error) {
     console.error('Get admin profile error:', error);
@@ -284,17 +264,17 @@ router.get('/profile', requireAdmin, async (req, res) => {
 });
 
 // ==========================
-// CTF MANAGEMENT WITH IST TIMEZONE
+// CTF Management
 // ==========================
 
-// Create CTF with IST timezone
+// Create CTF
 router.post('/ctfs/create', requireAdmin, [
   body('title').notEmpty().withMessage('Title is required'),
   body('description').notEmpty().withMessage('Description is required'),
   body('category').isIn(['Web Security', 'Cryptography', 'Forensics', 'Reverse Engineering', 'Pwn', 'Misc']).withMessage('Invalid category'),
   body('points').isInt({ min: 0 }).withMessage('Points must be a positive integer'),
-  body('activeHours.startTime').matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/).withMessage('Start time must be in HH:MM format (IST)'),
-  body('activeHours.endTime').matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/).withMessage('End time must be in HH:MM format (IST)'),
+  body('activeHours.startTime').matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/).withMessage('Start time must be in HH:MM format'),
+  body('activeHours.endTime').matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/).withMessage('End time must be in HH:MM format'),
   body('schedule.startDate').isISO8601().withMessage('Valid start date is required'),
   body('schedule.endDate').isISO8601().withMessage('Valid end date is required')
 ], async (req, res) => {
@@ -330,10 +310,7 @@ router.post('/ctfs/create', requireAdmin, [
       points,
       flag: flag || `CTF{${crypto.randomBytes(8).toString('hex')}}`,
       difficulty: difficulty || 'Easy',
-      activeHours: {
-        ...activeHours,
-        timezone: 'Asia/Kolkata' // Force IST timezone
-      },
+      activeHours,
       schedule: {
         startDate: new Date(schedule.startDate),
         endDate: new Date(schedule.endDate),
@@ -344,19 +321,16 @@ router.post('/ctfs/create', requireAdmin, [
       files: files || [],
       rules: rules || {},
       ctfLink: ctfLink || '',
-      createdBy: req.admin._id,
-      isVisible: true,
-      isPublished: true
+      createdBy: req.admin._id
     });
 
-    // Calculate initial status using IST
     ctf.status = ctf.calculateStatus();
-    console.log('Initial CTF status (IST):', ctf.status);
+    console.log('Initial CTF status:', ctf.status);
     
     await ctf.save();
 
     res.status(201).json({
-      message: 'CTF created successfully with IST timezone',
+      message: 'CTF created successfully',
       ctf: {
         _id: ctf._id,
         title: ctf.title,
@@ -368,11 +342,8 @@ router.post('/ctfs/create', requireAdmin, [
         schedule: ctf.schedule,
         isVisible: ctf.isVisible,
         isPublished: ctf.isPublished,
-        isCurrentlyActive: ctf.isCurrentlyActive(),
         ctfLink: ctf.ctfLink
-      },
-      currentIST: getCurrentISTString(),
-      timezone: 'Asia/Kolkata'
+      }
     });
   } catch (error) {
     console.error('Create CTF error:', error);
@@ -389,7 +360,8 @@ router.post('/ctfs/create', requireAdmin, [
   }
 });
 
-// Get All CTFs with IST Status
+// ✅ Get All CTFs (Admin View with Filters + Pagination)
+// In adminRoutes.js - Update the get all CTFs endpoint
 router.get('/ctfs', requireAdmin, async (req, res) => {
   try {
     const {
@@ -425,7 +397,7 @@ router.get('/ctfs', requireAdmin, async (req, res) => {
 
     const total = await CTF.countDocuments(filter);
 
-    // ✅ Update status for each CTF based on current IST time
+    // ✅ Update status for each CTF based on current time
     const updatedCTFs = await Promise.all(ctfs.map(async (ctf) => {
       const newStatus = ctf.calculateStatus();
       if (ctf.status !== newStatus) {
@@ -435,7 +407,7 @@ router.get('/ctfs', requireAdmin, async (req, res) => {
       return ctf;
     }));
 
-    // ✅ Transform for cleaner response with IST info
+    // ✅ Transform for cleaner response
     const formattedCTFs = updatedCTFs.map(ctf => ({
       _id: ctf._id,
       title: ctf.title,
@@ -445,7 +417,6 @@ router.get('/ctfs', requireAdmin, async (req, res) => {
       difficulty: ctf.difficulty,
       status: ctf.status,
       isCurrentlyActive: ctf.isCurrentlyActive(),
-      canSubmit: ctf.canSubmit(),
       createdBy: ctf.createdBy,
       createdAt: ctf.createdAt,
       schedule: ctf.schedule,
@@ -453,15 +424,11 @@ router.get('/ctfs', requireAdmin, async (req, res) => {
       isVisible: ctf.isVisible,
       isPublished: ctf.isPublished,
       ctfLink: ctf.ctfLink,
-      participants: ctf.participants.length,
-      totalSubmissions: ctf.totalSubmissions,
-      correctSubmissions: ctf.correctSubmissions
+      participants: ctf.participants
     }));
 
     res.json({
       ctfs: formattedCTFs,
-      currentIST: getCurrentISTString(),
-      timezone: 'Asia/Kolkata',
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -475,7 +442,8 @@ router.get('/ctfs', requireAdmin, async (req, res) => {
   }
 });
 
-// Get Single CTF with IST Info
+
+// ✅ Get Single CTF (Admin View with Participants)
 router.get('/ctfs/:id', requireAdmin, async (req, res) => {
   try {
     const ctf = await CTF.findById(req.params.id)
@@ -495,8 +463,6 @@ router.get('/ctfs/:id', requireAdmin, async (req, res) => {
       difficulty: ctf.difficulty,
       flag: ctf.flag,
       status: ctf.status,
-      isCurrentlyActive: ctf.isCurrentlyActive(),
-      canSubmit: ctf.canSubmit(),
       createdBy: ctf.createdBy,
       schedule: ctf.schedule,
       activeHours: ctf.activeHours,
@@ -508,31 +474,27 @@ router.get('/ctfs/:id', requireAdmin, async (req, res) => {
       isVisible: ctf.isVisible,
       isPublished: ctf.isPublished,
       ctfLink: ctf.ctfLink,
-      totalSubmissions: ctf.totalSubmissions,
-      correctSubmissions: ctf.correctSubmissions,
       createdAt: ctf.createdAt,
       updatedAt: ctf.updatedAt
     };
 
-    res.json({ 
-      ctf: detailedCTF,
-      currentIST: getCurrentISTString(),
-      timezone: 'Asia/Kolkata'
-    });
+    res.json({ ctf: detailedCTF });
   } catch (error) {
     console.error('Get CTF by ID error:', error);
     res.status(500).json({ error: 'Server error while fetching CTF details' });
   }
 });
 
-// Update CTF with IST
+
+// Update CTF
+// Update CTF
 router.put('/ctfs/:id', requireAdmin, [
   body('title').optional().notEmpty().withMessage('Title cannot be empty'),
   body('description').optional().notEmpty().withMessage('Description cannot be empty'),
   body('category').optional().isIn(['Web Security', 'Cryptography', 'Forensics', 'Reverse Engineering', 'Pwn', 'Misc']).withMessage('Invalid category'),
   body('points').optional().isInt({ min: 0 }).withMessage('Points must be a positive integer'),
-  body('activeHours.startTime').optional().matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/).withMessage('Start time must be in HH:MM format (IST)'),
-  body('activeHours.endTime').optional().matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/).withMessage('End time must be in HH:MM format (IST)')
+  body('activeHours.startTime').optional().matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/).withMessage('Start time must be in HH:MM format'),
+  body('activeHours.endTime').optional().matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/).withMessage('End time must be in HH:MM format')
 ], async (req, res) => {
   try {
     console.log('Update CTF request body:', req.body);
@@ -579,7 +541,7 @@ router.put('/ctfs/:id', requireAdmin, [
       const updatedActiveHours = {
         startTime: req.body.activeHours.startTime || ctf.activeHours.startTime,
         endTime: req.body.activeHours.endTime || ctf.activeHours.endTime,
-        timezone: 'Asia/Kolkata' // Always force IST
+        timezone: req.body.activeHours.timezone || ctf.activeHours.timezone || 'UTC'
       };
 
       // ✅ Require different times
@@ -593,29 +555,25 @@ router.put('/ctfs/:id', requireAdmin, [
     if (typeof req.body.isVisible !== 'undefined') ctf.isVisible = req.body.isVisible;
     if (typeof req.body.isPublished !== 'undefined') ctf.isPublished = req.body.isPublished;
 
-    // Recalculate status with IST
     ctf.status = ctf.calculateStatus();
 
     await ctf.validate();
     await ctf.save();
 
     res.json({
-      message: 'CTF updated successfully with IST timezone',
+      message: 'CTF updated successfully',
       ctf: {
         _id: ctf._id,
         title: ctf.title,
         category: ctf.category,
         points: ctf.points,
         status: ctf.status,
-        isCurrentlyActive: ctf.isCurrentlyActive(),
         isVisible: ctf.isVisible,
         isPublished: ctf.isPublished,
         schedule: ctf.schedule,
         activeHours: ctf.activeHours,
         ctfLink: ctf.ctfLink
-      },
-      currentIST: getCurrentISTString(),
-      timezone: 'Asia/Kolkata'
+      }
     });
   } catch (error) {
     console.error('Update CTF error:', error);
@@ -646,7 +604,6 @@ router.post('/ctfs/:id/publish', requireAdmin, async (req, res) => {
 
     ctf.isVisible = true;
     ctf.isPublished = true;
-    ctf.status = ctf.calculateStatus(); // Recalculate status
     await ctf.save();
 
     res.json({ 
@@ -655,12 +612,8 @@ router.post('/ctfs/:id/publish', requireAdmin, async (req, res) => {
         _id: ctf._id,
         title: ctf.title,
         isVisible: ctf.isVisible,
-        isPublished: ctf.isPublished,
-        status: ctf.status,
-        isCurrentlyActive: ctf.isCurrentlyActive()
-      },
-      currentIST: getCurrentISTString(),
-      timezone: 'Asia/Kolkata'
+        isPublished: ctf.isPublished
+      }
     });
   } catch (error) {
     console.error('Publish CTF error:', error);
@@ -679,7 +632,6 @@ router.post('/ctfs/:id/unpublish', requireAdmin, async (req, res) => {
 
     ctf.isVisible = false;
     ctf.isPublished = false;
-    ctf.status = 'inactive';
     await ctf.save();
 
     res.json({ 
@@ -688,11 +640,8 @@ router.post('/ctfs/:id/unpublish', requireAdmin, async (req, res) => {
         _id: ctf._id,
         title: ctf.title,
         isVisible: ctf.isVisible,
-        isPublished: ctf.isPublished,
-        status: ctf.status
-      },
-      currentIST: getCurrentISTString(),
-      timezone: 'Asia/Kolkata'
+        isPublished: ctf.isPublished
+      }
     });
   } catch (error) {
     console.error('Unpublish CTF error:', error);
@@ -713,214 +662,9 @@ router.delete('/ctfs/:id', requireAdmin, async (req, res) => {
 
     await CTF.findByIdAndDelete(req.params.id);
 
-    res.json({ 
-      message: 'CTF deleted successfully',
-      currentIST: getCurrentISTString()
-    });
+    res.json({ message: 'CTF deleted successfully' });
   } catch (error) {
     console.error('Delete CTF error:', error);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// ==========================
-// CTF STATUS MANAGEMENT WITH IST
-// ==========================
-
-// Toggle CTF activation with IST
-router.put('/ctfs/:id/toggle-activation', requireAdmin, async (req, res) => {
-  try {
-    const ctf = await CTF.findById(req.params.id);
-    if (!ctf) {
-      return res.status(404).json({ error: 'CTF not found' });
-    }
-
-    await ctf.toggleActivation();
-    await ctf.save();
-
-    res.json({
-      message: `CTF ${ctf.isVisible ? 'activated' : 'deactivated'} successfully`,
-      ctf: {
-        _id: ctf._id,
-        title: ctf.title,
-        isVisible: ctf.isVisible,
-        status: ctf.status,
-        isCurrentlyActive: ctf.isCurrentlyActive()
-      },
-      currentIST: getCurrentISTString(),
-      timezone: 'Asia/Kolkata'
-    });
-  } catch (error) {
-    console.error('Toggle activation error:', error);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// Force status update for CTF with IST
-router.put('/ctfs/:id/force-status', requireAdmin, [
-  body('status').isIn(['active', 'upcoming', 'ended', 'inactive']).withMessage('Invalid status')
-], async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ 
-        error: 'Validation failed', 
-        details: errors.array() 
-      });
-    }
-
-    const { status } = req.body;
-    const ctf = await CTF.findById(req.params.id);
-    
-    if (!ctf) {
-      return res.status(404).json({ error: 'CTF not found' });
-    }
-
-    // Use the force status method
-    ctf.forceStatusUpdate(status);
-    await ctf.save();
-
-    res.json({
-      message: `CTF status force-updated to ${status}`,
-      ctf: {
-        _id: ctf._id,
-        title: ctf.title,
-        status: ctf.status,
-        isVisible: ctf.isVisible,
-        isPublished: ctf.isPublished,
-        isCurrentlyActive: ctf.isCurrentlyActive()
-      },
-      currentIST: getCurrentISTString(),
-      timezone: 'Asia/Kolkata'
-    });
-  } catch (error) {
-    console.error('Force status error:', error);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// Recalculate all CTF statuses with IST
-router.post('/ctfs/recalculate-statuses-ist', requireAdmin, async (req, res) => {
-  try {
-    const ctfs = await CTF.find({});
-    let updated = 0;
-    
-    for (const ctf of ctfs) {
-      const oldStatus = ctf.status;
-      
-      // Force IST timezone
-      ctf.activeHours.timezone = 'Asia/Kolkata';
-      const newStatus = ctf.calculateStatus();
-      
-      if (oldStatus !== newStatus) {
-        ctf.status = newStatus;
-        await ctf.save();
-        updated++;
-        
-        console.log('🔄 Status Updated (IST):', {
-          title: ctf.title,
-          from: oldStatus,
-          to: newStatus,
-          isCurrentlyActive: ctf.isCurrentlyActive(),
-          activeHours: ctf.activeHours
-        });
-      }
-    }
-    
-    res.json({
-      message: `CTF statuses recalculated using IST: ${updated} updated`,
-      updated,
-      currentIST: getCurrentISTString(),
-      timezone: 'Asia/Kolkata'
-    });
-  } catch (error) {
-    console.error('Recalculate statuses IST error:', error);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// Bulk status update with IST
-router.post('/ctfs/bulk-status-update', requireAdmin, [
-  body('ctfIds').isArray().withMessage('CTF IDs array is required'),
-  body('status').isIn(['active', 'upcoming', 'ended', 'inactive']).withMessage('Invalid status')
-], async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ 
-        error: 'Validation failed', 
-        details: errors.array() 
-      });
-    }
-
-    const { ctfIds, status } = req.body;
-    
-    const results = await Promise.all(
-      ctfIds.map(async (ctfId) => {
-        try {
-          const ctf = await CTF.findById(ctfId);
-          if (ctf) {
-            ctf.forceStatusUpdate(status);
-            await ctf.save();
-            return { ctfId, success: true, title: ctf.title, newStatus: ctf.status };
-          }
-          return { ctfId, success: false, error: 'CTF not found' };
-        } catch (error) {
-          return { ctfId, success: false, error: error.message };
-        }
-      })
-    );
-
-    const successful = results.filter(r => r.success).length;
-    const failed = results.filter(r => !r.success);
-
-    res.json({
-      message: `Bulk status update completed: ${successful} successful, ${failed.length} failed`,
-      currentIST: getCurrentISTString(),
-      timezone: 'Asia/Kolkata',
-      results: {
-        successful,
-        failed,
-        details: results
-      }
-    });
-  } catch (error) {
-    console.error('Bulk status update error:', error);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// ==========================
-// CTF ANALYTICS & PARTICIPANTS
-// ==========================
-
-// Enhanced CTF analytics with IST
-router.get('/ctf-analytics/:id', requireAdmin, async (req, res) => {
-  try {
-    const ctf = await CTF.findById(req.params.id)
-      .populate('participants.user', 'fullName email expertiseLevel')
-      .populate('createdBy', 'fullName email');
-    
-    if (!ctf) {
-      return res.status(404).json({ error: 'CTF not found' });
-    }
-
-    // Use the enhanced analytics method
-    const analytics = ctf.getAnalytics();
-
-    res.json({
-      message: 'CTF analytics retrieved successfully',
-      analytics: {
-        ...analytics,
-        timing: {
-          ...analytics.timing,
-          currentIST: getCurrentISTString(),
-          timezone: 'Asia/Kolkata'
-        }
-      }
-    });
-  } catch (error) {
-    console.error('Get CTF analytics error:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -957,8 +701,6 @@ router.get('/ctfs/:id/participants', requireAdmin, async (req, res) => {
     res.json({
       ctf: { _id: ctf._id, title: ctf.title },
       participants: paginatedParticipants,
-      currentIST: getCurrentISTString(),
-      timezone: 'Asia/Kolkata',
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -972,8 +714,261 @@ router.get('/ctfs/:id/participants', requireAdmin, async (req, res) => {
   }
 });
 
+// routes/adminRoutes.js - Add these endpoints
+
+// Toggle CTF activation
+router.put('/ctfs/:id/toggle-activation', requireAdmin, async (req, res) => {
+  try {
+    const ctf = await CTF.findById(req.params.id);
+    if (!ctf) {
+      return res.status(404).json({ error: 'CTF not found' });
+    }
+
+    await ctf.toggleActivation();
+    await ctf.save();
+
+    res.json({
+      message: `CTF ${ctf.isVisible ? 'activated' : 'deactivated'} successfully`,
+      ctf: {
+        _id: ctf._id,
+        title: ctf.title,
+        isVisible: ctf.isVisible,
+        status: ctf.status
+      }
+    });
+  } catch (error) {
+    console.error('Toggle activation error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// In your admin routes - Add these endpoints:
+
+// Force status update for CTF
+router.put('/ctfs/:id/force-status', requireAdmin, [
+  body('status').isIn(['active', 'upcoming', 'ended', 'inactive']).withMessage('Invalid status')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ 
+        error: 'Validation failed', 
+        details: errors.array() 
+      });
+    }
+
+    const { status } = req.body;
+    const ctf = await CTF.findById(req.params.id);
+    
+    if (!ctf) {
+      return res.status(404).json({ error: 'CTF not found' });
+    }
+
+    // Use the force status method
+    ctf.forceStatusUpdate(status);
+    await ctf.save();
+
+    res.json({
+      message: `CTF status force-updated to ${status}`,
+      ctf: {
+        _id: ctf._id,
+        title: ctf.title,
+        status: ctf.status,
+        isVisible: ctf.isVisible,
+        isPublished: ctf.isPublished
+      }
+    });
+  } catch (error) {
+    console.error('Force status error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+
+
+// Enhanced CTF analytics endpoint
+router.get('/ctf-analytics/:id', requireAdmin, async (req, res) => {
+  try {
+    const ctf = await CTF.findById(req.params.id)
+      .populate('participants.user', 'fullName email expertiseLevel');
+    
+    if (!ctf) {
+      return res.status(404).json({ error: 'CTF not found' });
+    }
+
+    // Use the enhanced analytics method
+    const analytics = ctf.getAnalytics();
+
+    res.json({
+      message: 'CTF analytics retrieved successfully',
+      analytics
+    });
+  } catch (error) {
+    console.error('Get CTF analytics error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Bulk status update endpoint
+router.post('/ctfs/bulk-status-update', requireAdmin, [
+  body('ctfIds').isArray().withMessage('CTF IDs array is required'),
+  body('status').isIn(['active', 'upcoming', 'ended', 'inactive']).withMessage('Invalid status')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ 
+        error: 'Validation failed', 
+        details: errors.array() 
+      });
+    }
+
+    const { ctfIds, status } = req.body;
+    
+    const results = await Promise.all(
+      ctfIds.map(async (ctfId) => {
+        try {
+          const ctf = await CTF.findById(ctfId);
+          if (ctf) {
+            ctf.forceStatusUpdate(status);
+            await ctf.save();
+            return { ctfId, success: true, title: ctf.title };
+          }
+          return { ctfId, success: false, error: 'CTF not found' };
+        } catch (error) {
+          return { ctfId, success: false, error: error.message };
+        }
+      })
+    );
+
+    const successful = results.filter(r => r.success).length;
+    const failed = results.filter(r => !r.success);
+
+    res.json({
+      message: `Bulk status update completed: ${successful} successful, ${failed.length} failed`,
+      results: {
+        successful,
+        failed,
+        details: results
+      }
+    });
+  } catch (error) {
+    console.error('Bulk status update error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Export CTF submissions
+router.get('/export/ctfs/:id/submissions', requireAdmin, async (req, res) => {
+  try {
+    const ctf = await CTF.findById(req.params.id);
+    if (!ctf) {
+      return res.status(404).json({ error: 'CTF not found' });
+    }
+
+    const submissions = await Submission.find({ ctf: req.params.id })
+      .populate('user', 'fullName email')
+      .populate('reviewedBy', 'fullName email')
+      .sort({ submittedAt: -1 });
+
+    if (!submissions.length) {
+      return res.status(404).json({ error: 'No submissions found for this CTF' });
+    }
+
+    // Helper to convert UTC date to IST string
+    const toIST = (date) => {
+      if (!date) return '';
+      return new Date(date).toLocaleString('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        hour12: false,
+      });
+    };
+
+    // Map only required fields
+    const formattedSubmissions = submissions.map((sub) => ({
+      userFullName: sub.user?.fullName || 'N/A',
+      userEmail: sub.user?.email || 'N/A',
+      screenshotUrl: sub.screenshot?.url || '',
+      submissionStatus: sub.submissionStatus || '',
+      points: sub.points ?? 0,
+      submittedAt: toIST(sub.submittedAt),
+      reviewedAt: toIST(sub.reviewedAt),
+      reviewedBy: sub.reviewedBy?.fullName || sub.reviewedBy?.email || 'N/A',
+    }));
+
+    const fields = [
+      'userFullName',
+      'userEmail',
+      'screenshotUrl',
+      'submissionStatus',
+      'points',
+      'submittedAt',
+      'reviewedAt',
+      'reviewedBy',
+    ];
+
+    const parser = new Parser({ fields });
+    const csv = parser.parse(formattedSubmissions);
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename=submissions-${ctf.title}-${new Date()
+        .toISOString()
+        .split('T')[0]}.csv`
+    );
+
+    res.send(csv);
+  } catch (error) {
+    console.error('Export submissions error:', error);
+    res.status(500).json({ error: 'Failed to export submissions' });
+  }
+});
+
+// Export CTF participants
+router.get('/export/ctfs/:id/participants', requireAdmin, async (req, res) => {
+  try {
+    const ctf = await CTF.findById(req.params.id).populate('participants.user', 'fullName email expertiseLevel');
+    if (!ctf) {
+      return res.status(404).json({ error: 'CTF not found' });
+    }
+
+    const participantsData = ctf.participants.map(p => ({
+      fullName: p.user.fullName,
+      email: p.user.email,
+      expertiseLevel: p.user.expertiseLevel,
+      joinedAt: p.joinedAt,
+      submittedAt: p.submittedAt,
+      isCorrect: p.isCorrect,
+      pointsEarned: p.pointsEarned,
+      attempts: p.attempts
+    }));
+
+    const fields = [
+      'fullName',
+      'email',
+      'expertiseLevel',
+      'joinedAt',
+      'submittedAt',
+      'isCorrect',
+      'pointsEarned',
+      'attempts'
+    ];
+
+    const parser = new Parser({ fields });
+    const csv = parser.parse(participantsData);
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename=participants-${ctf.title}-${new Date().toISOString().split('T')[0]}.csv`);
+    res.send(csv);
+  } catch (error) {
+    console.error('Export participants error:', error);
+    res.status(500).json({ error: 'Failed to export participants' });
+  }
+});
+
 // ==========================
-// USER MANAGEMENT
+// User Management
 // ==========================
 
 // Create user
@@ -1013,10 +1008,10 @@ router.post('/users/create', requireAdmin, [
     await newUser.save();
 
     // Send welcome email
-    await sendMail({
-      email: newUser.email,
-      subject: 'Welcome to TechD CTF Platform - Your Account Details',
-      message: `
+  await sendMail({
+  email: newUser.email,
+  subject: 'Welcome to TechD CTF Platform - Your Account Details',
+  message: `
 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #e0e0e0;">
   <div style="background: #dc2626; color: white; padding: 25px; text-align: center;">
     <h1 style="margin: 0; font-size: 24px;">TECHD CTF PLATFORM</h1>
@@ -1037,7 +1032,8 @@ router.post('/users/create', requireAdmin, [
       <table style="width: 100%;">
         <tr><td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb; font-weight: bold; width: 120px;">Email:</td><td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;">${newUser.email}</td></tr>
         <tr><td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb; font-weight: bold;">Password:</td><td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;">${password}</td></tr>
-        <tr><td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb; font-weight: bold;">Semester:</td><td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;">${newUser.Sem}</td></tr>
+        <tr><td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb; font-weight: bold;">Semester:</td><td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;">${newUser.sem}</td></tr>
+        <tr><td style="padding: 8px 0; font-weight: bold;">ERP Number:</td><td style="padding: 8px 0;">${newUser.erpNumber}</td></tr>
       </table>
     </div>
 
@@ -1064,8 +1060,8 @@ router.post('/users/create', requireAdmin, [
     <p style="color: #9ca3af; margin: 0; font-size: 11px;">Building cybersecurity professionals</p>
   </div>
 </div>
-      `
-    });
+  `
+});
 
     const userResponse = newUser.toJSON();
     delete userResponse.password;
@@ -1103,8 +1099,6 @@ router.get('/users', requireAdmin, async (req, res) => {
 
     res.json({
       users,
-      currentIST: getCurrentISTString(),
-      timezone: 'Asia/Kolkata',
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -1151,7 +1145,7 @@ router.put('/users/:id', requireAdmin, [
     // Update fields
     if (fullName) user.fullName = fullName;
     if (contactNumber !== undefined) user.contactNumber = contactNumber;
-    if (Sem) user.Sem = Sem;
+    if (Sem) user.Sem  = Sem;
     if (expertiseLevel) user.expertiseLevel = expertiseLevel;
     if (typeof isActive !== 'undefined') user.isActive = isActive;
     
@@ -1162,8 +1156,7 @@ router.put('/users/:id', requireAdmin, [
     
     res.json({ 
       message: 'User updated successfully',
-      user: userResponse,
-      currentIST: getCurrentISTString()
+      user: userResponse
     });
   } catch (error) {
     console.error('Update user error:', error);
@@ -1188,122 +1181,255 @@ router.delete('/users/:id', requireAdmin, async (req, res) => {
     
     await User.findByIdAndDelete(id);
     
-    res.json({ 
-      message: 'User deleted successfully',
-      currentIST: getCurrentISTString()
-    });
+    res.json({ message: 'User deleted successfully' });
   } catch (error) {
     console.error('Delete user error:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
+
 // ==========================
-// DASHBOARD & ANALYTICS WITH IST
+// MISSING ROUTES TO ADD TO adminRoutes.js
 // ==========================
 
-// Get dashboard statistics with IST
-router.get('/dashboard-stats', requireAdmin, async (req, res) => {
+// Get user by ID
+router.get('/users/:id', requireAdmin, async (req, res) => {
   try {
-    // Get total users count
-    const totalUsers = await User.countDocuments();
+    const { id } = req.params;
     
-    // Get active users (users with recent activity) - last 7 days
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    const activeUsers = await User.countDocuments({
-      lastLogin: { $gte: sevenDaysAgo }
-    });
+    const user = await User.findById(id)
+      .select('-password -passwordResetToken -passwordResetExpires -loginHistory');
     
-    // Get new users today
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const newUsersToday = await User.countDocuments({
-      createdAt: { $gte: today }
-    });
-    
-    // Get CTF stats
-    const totalCTFs = await CTF.countDocuments();
-    const publishedCTFs = await CTF.countDocuments({ isPublished: true });
-    
-    // Get active CTFs based on IST
-    const activeCTFs = await CTF.countDocuments({ 
-      isPublished: true,
-      status: 'active'
-    });
-    
-    // Get submission stats
-    const totalSubmissions = await Submission.countDocuments();
-    const correctSubmissions = await Submission.countDocuments({ 
-      submissionStatus: 'approved' 
-    });
-    const pendingSubmissions = await Submission.countDocuments({ 
-      submissionStatus: 'pending' 
-    });
-    
-    // Calculate CTF status breakdown using IST
-    const ctfs = await CTF.find({});
-    
-    const ctfStatusBreakdown = {
-      active: { count: 0 },
-      upcoming: { count: 0 },
-      ended: { count: 0 },
-      inactive: { count: 0 }
-    };
-    
-    ctfs.forEach(ctf => {
-      // Use CTF's own status calculation which now uses IST
-      ctfStatusBreakdown[ctf.status] = {
-        count: (ctfStatusBreakdown[ctf.status]?.count || 0) + 1
-      };
-    });
-
-    // Get recent activity (last 20 activities)
-    const recentActivity = await Submission.find()
-      .populate('user', 'fullName email')
-      .populate('ctf', 'title')
-      .sort({ submittedAt: -1 })
-      .limit(20)
-      .then(submissions => 
-        submissions.map(sub => ({
-          type: 'submission',
-          _id: sub._id,
-          user: sub.user,
-          ctf: sub.ctf,
-          isCorrect: sub.submissionStatus === 'approved',
-          points: sub.points,
-          submittedAt: sub.submittedAt,
-          timestamp: sub.submittedAt
-        }))
-      );
-    
-    const stats = {
-      totalUsers,
-      activeUsers,
-      newUsersToday,
-      totalCTFs,
-      publishedCTFs,
-      activeCTFs,
-      totalSubmissions,
-      correctSubmissions,
-      pendingSubmissions,
-      ctfStatusBreakdown
-    };
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
     
     res.json({
-      message: 'Dashboard stats retrieved successfully',
-      stats,
-      recentActivity,
-      currentIST: getCurrentISTString(),
-      timezone: 'Asia/Kolkata'
+      message: 'User retrieved successfully',
+      user
     });
-    
   } catch (error) {
-    console.error('Get dashboard stats error:', error);
+    console.error('Get user error:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-// Get recent activity
+// Reset user password
+router.post('/users/:id/reset-password', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    // Generate temporary password
+    const tempPassword = crypto.randomBytes(8).toString('hex');
+    user.password = tempPassword;
+    await user.save();
+    
+    // Send email with temporary password
+    await sendMail({
+      email: user.email,
+      subject: 'Password Reset - TechD CTF Platform',
+      message: `
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #e0e0e0;">
+  <div style="background: #dc2626; color: white; padding: 25px; text-align: center;">
+    <h2 style="margin: 0;">Password Reset</h2>
+  </div>
+  
+  <div style="padding: 30px;">
+    <p style="color: #1f2937; margin-bottom: 15px;">
+      Hello <strong>${user.fullName}</strong>,
+    </p>
+    
+    <p style="color: #4b5563; margin-bottom: 20px;">
+      Your password has been reset by an administrator. Here is your new temporary password:
+    </p>
+    
+    <div style="background: #f8fafc; padding: 20px; border-radius: 6px; margin: 20px 0; border: 1px solid #e5e7eb;">
+      <h3 style="color: #dc2626; margin: 0 0 15px 0; text-align: center;">Temporary Password</h3>
+      <p style="text-align: center; font-size: 18px; font-weight: bold; color: #dc2626; margin: 0;">
+        ${tempPassword}
+      </p>
+    </div>
+
+    <div style="background: #fef2f2; padding: 15px; border-radius: 6px; margin: 20px 0; border: 1px solid #fecaca;">
+      <p style="color: #dc2626; margin: 0; font-weight: bold;">
+        🔒 Please change your password after logging in.
+      </p>
+    </div>
+
+    <div style="text-align: center; margin: 25px 0;">
+      <a href="${process.env.FRONTEND_URL}/login" style="background: #dc2626; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
+        Login to Platform
+      </a>
+    </div>
+  </div>
+</div>
+      `
+    });
+    
+    res.json({ 
+      message: 'Password reset successfully. Temporary password sent to user email.',
+      tempPassword: process.env.NODE_ENV === 'development' ? tempPassword : undefined
+    });
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Get user login history
+router.get('/users/:id/login-history', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const user = await User.findById(id)
+      .select('loginHistory fullName email');
+    
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    res.json({
+      message: 'Login history retrieved successfully',
+      user: {
+        _id: user._id,
+        fullName: user.fullName,
+        email: user.email,
+        loginHistory: user.loginHistory || []
+      }
+    });
+  } catch (error) {
+    console.error('Get login history error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Real-time CTF stats
+router.get('/analytics/ctf-real-time', requireAdmin, async (req, res) => {
+  try {
+    const ctfs = await CTF.find({ isPublished: true })
+      .select('title status participants totalSubmissions correctSubmissions activeHours schedule')
+      .sort({ createdAt: -1 });
+
+    const realTimeStats = ctfs.map(ctf => ({
+      _id: ctf._id,
+      title: ctf.title,
+      status: ctf.status,
+      isCurrentlyActive: ctf.isCurrentlyActive(),
+      participants: ctf.participants.length,
+      totalSubmissions: ctf.totalSubmissions,
+      correctSubmissions: ctf.correctSubmissions,
+      successRate: ctf.totalSubmissions > 0 ? 
+        Math.round((ctf.correctSubmissions / ctf.totalSubmissions) * 100) : 0,
+      activeHours: ctf.activeHours,
+      nextStatusChange: calculateNextStatusChange(ctf)
+    }));
+
+    res.json({
+      message: 'Real-time CTF stats retrieved successfully',
+      stats: realTimeStats
+    });
+  } catch (error) {
+    console.error('Get real-time CTF stats error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Platform stats
+router.get('/analytics/platform-stats', requireAdmin, async (req, res) => {
+  try {
+    const [
+      totalUsers,
+      activeUsers,
+      totalCTFs,
+      activeCTFs,
+      totalSubmissions,
+      todaySubmissions,
+      userGrowth
+    ] = await Promise.all([
+      User.countDocuments(),
+      User.countDocuments({ lastLogin: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } }),
+      CTF.countDocuments(),
+      CTF.countDocuments({ status: 'active', isPublished: true }),
+      Submission.countDocuments(),
+      Submission.countDocuments({ 
+        submittedAt: { $gte: new Date().setHours(0, 0, 0, 0) } 
+      }),
+      User.aggregate([
+        {
+          $group: {
+            _id: {
+              $dateToString: {
+                format: '%Y-%m-%d',
+                date: '$createdAt'
+              }
+            },
+            count: { $sum: 1 }
+          }
+        },
+        { $sort: { _id: 1 } },
+        { $limit: 30 }
+      ])
+    ]);
+
+    const platformStats = {
+      users: {
+        total: totalUsers,
+        active: activeUsers,
+        growth: userGrowth
+      },
+      ctfs: {
+        total: totalCTFs,
+        active: activeCTFs
+      },
+      submissions: {
+        total: totalSubmissions,
+        today: todaySubmissions
+      },
+      performance: {
+        uptime: process.uptime(),
+        memoryUsage: process.memoryUsage(),
+        timestamp: new Date()
+      }
+    };
+
+    res.json({
+      message: 'Platform stats retrieved successfully',
+      stats: platformStats
+    });
+  } catch (error) {
+    console.error('Get platform stats error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Helper function for next status change
+const calculateNextStatusChange = (ctf) => {
+  const now = new Date();
+  const [startHours, startMinutes] = ctf.activeHours.startTime.split(':').map(Number);
+  const [endHours, endMinutes] = ctf.activeHours.endTime.split(':').map(Number);
+  
+  const currentMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
+  const startMinutesTotal = startHours * 60 + startMinutes;
+  const endMinutesTotal = endHours * 60 + endMinutes;
+  
+  if (currentMinutes < startMinutesTotal) {
+    return `Starts at ${ctf.activeHours.startTime} IST`;
+  } else if (currentMinutes < endMinutesTotal) {
+    return `Ends at ${ctf.activeHours.endTime} IST`;
+  } else {
+    return `Starts tomorrow at ${ctf.activeHours.startTime} IST`;
+  }
+};
+
+// ==========================
+// Analytics & Dashboard
+// ==========================
 router.get('/analytics/recent-activity', requireAdmin, async (req, res) => {
   try {
     const { limit = 10 } = req.query;
@@ -1329,9 +1455,7 @@ router.get('/analytics/recent-activity', requireAdmin, async (req, res) => {
     
     res.json({
       message: 'Recent activity retrieved successfully',
-      activities: recentSubmissions,
-      currentIST: getCurrentISTString(),
-      timezone: 'Asia/Kolkata'
+      activities: recentSubmissions
     });
     
   } catch (error) {
@@ -1339,8 +1463,426 @@ router.get('/analytics/recent-activity', requireAdmin, async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
+// Get dashboard statistics
+// Dashboard stats endpoint
+router.get('/dashboard-stats', requireAdmin, async (req, res) => {
+  try {
+    // Get total users count
+    const totalUsers = await User.countDocuments();
+    
+    // Get active users (users with recent activity)
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const activeUsers = await User.countDocuments({
+      lastLogin: { $gte: sevenDaysAgo }
+    });
+    
+    // Get new users today
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const newUsersToday = await User.countDocuments({
+      createdAt: { $gte: today }
+    });
+    
+    // Get CTF stats
+    const totalCTFs = await CTF.countDocuments();
+    const publishedCTFs = await CTF.countDocuments({ isPublished: true });
+    const visibleCTFs = await CTF.countDocuments({ 
+      isPublished: true, 
+      status: 'active' 
+    });
+    
+    // Get submission stats
+    const totalSubmissions = await Submission.countDocuments();
+    const correctSubmissions = await Submission.countDocuments({ 
+      submissionStatus: 'approved' 
+    });
+    const pendingSubmissions = await Submission.countDocuments({ 
+      submissionStatus: 'pending' 
+    });
+    
+    // Calculate CTF status breakdown
+    const currentTime = new Date();
+    const ctfs = await CTF.find({});
+    
+    const ctfStatusBreakdown = {
+      active: { count: 0 },
+      upcoming: { count: 0 },
+      ended: { count: 0 },
+      inactive: { count: 0 }
+    };
+    
+    ctfs.forEach(ctf => {
+      const startDate = new Date(ctf.schedule.startDate);
+      const endDate = new Date(ctf.schedule.endDate);
+      
+      if (ctf.status === 'active') {
+        if (currentTime >= startDate && currentTime <= endDate) {
+          ctfStatusBreakdown.active.count++;
+        } else if (currentTime < startDate) {
+          ctfStatusBreakdown.upcoming.count++;
+        } else {
+          ctfStatusBreakdown.ended.count++;
+        }
+      } else {
+        ctfStatusBreakdown.inactive.count++;
+      }
+    });
+    
+    // Get recent activity (last 20 activities)
+    const recentActivity = await Submission.find()
+      .populate('user', 'fullName email')
+      .populate('ctf', 'title')
+      .sort({ submittedAt: -1 })
+      .limit(20)
+      .then(submissions => 
+        submissions.map(sub => ({
+          type: 'submission',
+          _id: sub._id,
+          user: sub.user,
+          ctf: sub.ctf,
+          isCorrect: sub.submissionStatus === 'approved',
+          points: sub.points,
+          submittedAt: sub.submittedAt,
+          timestamp: sub.submittedAt
+        }))
+      );
+    
+    const stats = {
+      totalUsers,
+      activeUsers,
+      newUsersToday,
+      totalCTFs,
+      publishedCTFs,
+      visibleCTFs,
+      totalSubmissions,
+      correctSubmissions,
+      pendingSubmissions,
+      ctfStatusBreakdown
+    };
+    
+    res.json({
+      message: 'Dashboard stats retrieved successfully',
+      stats,
+      recentActivity
+    });
+    
+  } catch (error) {
+    console.error('Get dashboard stats error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
 
-// Get recent logins
+// Get CTF analytics
+router.get('/ctf-analytics/:id', requireAdmin, async (req, res) => {
+  try {
+    const ctf = await CTF.findById(req.params.id);
+    if (!ctf) {
+      return res.status(404).json({ error: 'CTF not found' });
+    }
+
+    const analytics = {
+      basic: {
+        title: ctf.title,
+        category: ctf.category,
+        difficulty: ctf.difficulty,
+        points: ctf.points,
+        status: ctf.status,
+        totalParticipants: ctf.participants.length,
+        correctSubmissions: ctf.correctSubmissions,
+        totalSubmissions: ctf.totalSubmissions,
+        successRate: ctf.totalSubmissions > 0 ? 
+          Math.round((ctf.correctSubmissions / ctf.totalSubmissions) * 100) : 0
+      },
+      participants: ctf.participants.map(p => ({
+        user: p.user,
+        joinedAt: p.joinedAt,
+        submittedAt: p.submittedAt,
+        isCorrect: p.isCorrect,
+        pointsEarned: p.pointsEarned,
+        attempts: p.attempts
+      })),
+      schedule: {
+        activeHours: ctf.activeHours,
+        currentStatus: ctf.isCurrentlyActive() ? 'Active' : 'Inactive',
+        nextActive: ctf.calculateNextActivePeriod()
+      }
+    };
+
+    res.json({ analytics });
+  } catch (error) {
+    console.error('Get CTF analytics error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+// In adminRoutes.js - Add force status recalculation
+router.post('/ctfs/recalculate-statuses-ist', requireAdmin, async (req, res) => {
+  try {
+    const ctfs = await CTF.find({});
+    let updated = 0;
+    
+    for (const ctf of ctfs) {
+      const oldStatus = ctf.status;
+      
+      // Force IST timezone
+      ctf.activeHours.timezone = 'Asia/Kolkata';
+      const newStatus = ctf.calculateStatus();
+      
+      if (oldStatus !== newStatus) {
+        ctf.status = newStatus;
+        await ctf.save();
+        updated++;
+        
+        console.log('🔄 Status Updated (IST):', {
+          title: ctf.title,
+          from: oldStatus,
+          to: newStatus,
+          isCurrentlyActive: ctf.isCurrentlyActive(),
+          activeHours: ctf.activeHours
+        });
+      }
+    }
+    
+    res.json({
+      message: `CTF statuses recalculated using IST: ${updated} updated`,
+      updated
+    });
+  } catch (error) {
+    console.error('Recalculate statuses IST error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+// ==========================
+// System Management
+// ==========================
+
+// Update all CTF statuses
+router.post('/update-ctf-statuses', requireAdmin, async (req, res) => {
+  try {
+    const result = await CTF.updateAllStatuses();
+    res.json({ 
+      message: 'CTF statuses updated successfully',
+      updated: result.updated
+    });
+  } catch (error) {
+    console.error('Update CTF statuses error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Admin logout
+router.post('/logout', requireAdmin, (req, res) => {
+  res.clearCookie('jwt');
+  res.json({ message: 'Logged out successfully' });
+});
+
+
+// ==========================
+// Comprehensive Analytics
+// ==========================
+
+// Get comprehensive analytics
+router.get('/analytics/comprehensive', requireAdmin, async (req, res) => {
+  try {
+    const { timeRange = '7d' } = req.query;
+    
+    // Calculate date range based on timeRange parameter
+    let startDate;
+    const endDate = new Date();
+    
+    switch (timeRange) {
+      case '24h':
+        startDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        break;
+      case '7d':
+        startDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        break;
+      case '30d':
+        startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        break;
+      case '90d':
+        startDate = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+        break;
+      default:
+        startDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    }
+
+    // Get comprehensive analytics data
+    const [
+      userStats,
+      ctfStats,
+      submissionStats,
+      categoryPerformance,
+      userActivityStats
+    ] = await Promise.all([
+      // User statistics
+      User.aggregate([
+        {
+          $group: {
+            _id: null,
+            total: { $sum: 1 },
+            active: { $sum: { $cond: ['$isActive', 1, 0] } },
+            verified: { $sum: { $cond: ['$isVerified', 1, 0] } }
+          }
+        },
+        {
+          $project: {
+            _id: 0,
+            total: 1,
+            active: 1,
+            verified: 1
+          }
+        }
+      ]),
+      
+      // CTF statistics by status
+      CTF.aggregate([
+        {
+          $group: {
+            _id: '$status',
+            count: { $sum: 1 }
+          }
+        }
+      ]),
+      
+      // Submission statistics
+      Submission.aggregate([
+        {
+          $match: {
+            submittedAt: { $gte: startDate, $lte: endDate }
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: 1 },
+            correctSubmissions: { $sum: { $cond: ['$isCorrect', 1, 0] } }
+          }
+        }
+      ]),
+      
+      // Category performance
+      Submission.aggregate([
+        {
+          $match: {
+            submittedAt: { $gte: startDate, $lte: endDate },
+            isCorrect: true
+          }
+        },
+        {
+          $lookup: {
+            from: 'ctfs',
+            localField: 'ctf',
+            foreignField: '_id',
+            as: 'ctfInfo'
+          }
+        },
+        {
+          $unwind: '$ctfInfo'
+        },
+        {
+          $group: {
+            _id: '$ctfInfo.category',
+            totalSolves: { $sum: 1 },
+            averagePoints: { $avg: '$points' }
+          }
+        },
+        {
+          $sort: { totalSolves: -1 }
+        }
+      ]),
+      
+      // User activity stats
+      User.aggregate([
+        {
+          $project: {
+            activeToday: {
+              $cond: [
+                { $gte: ['$lastLogin', new Date(Date.now() - 24 * 60 * 60 * 1000)] },
+                1,
+                0
+              ]
+            },
+            activeThisWeek: {
+              $cond: [
+                { $gte: ['$lastLogin', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)] },
+                1,
+                0
+              ]
+            }
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            activeToday: { $sum: '$activeToday' },
+            activeThisWeek: { $sum: '$activeThisWeek' }
+          }
+        }
+      ])
+    ]);
+
+    // Get user role distribution
+    const roleStats = await User.aggregate([
+      {
+        $group: {
+          _id: '$role',
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // Get recent activity for the selected time range
+    const recentActivity = await Submission.find({
+      submittedAt: { $gte: startDate, $lte: endDate }
+    })
+    .populate('user', 'fullName email')
+    .populate('ctf', 'title category')
+    .sort({ submittedAt: -1 })
+    .limit(20)
+    .select('user ctf isCorrect points submittedAt');
+
+    // Format the response
+    const analytics = {
+      users: {
+        total: userStats[0]?.total || 0,
+        active: userStats[0]?.active || 0,
+        verified: userStats[0]?.verified || 0,
+        roleStats: roleStats,
+        activityStats: userActivityStats
+      },
+      ctfs: {
+        total: ctfStats.reduce((acc, curr) => acc + curr.count, 0),
+        statusStats: ctfStats
+      },
+      submissions: {
+        total: submissionStats[0]?.total || 0,
+        correctSubmissions: submissionStats[0]?.correctSubmissions || 0,
+        categoryPerformance: categoryPerformance
+      },
+      resources: {
+        totalStorage: 0, // You can calculate this if you have file storage
+        activeConnections: 0 // You can track this if needed
+      },
+      recentActivity: recentActivity,
+      timeRange: {
+        start: startDate,
+        end: endDate,
+        label: timeRange
+      }
+    };
+
+    res.json({
+      message: 'Comprehensive analytics retrieved successfully',
+      analytics
+    });
+  } catch (error) {
+    console.error('Get comprehensive analytics error:', error);
+    res.status(500).json({ error: 'Failed to fetch analytics data' });
+  }
+});
+
+// Get user login history
+// Recent logins endpoint
 router.get('/recent-logins', requireAdmin, async (req, res) => {
   try {
     const { limit = 8 } = req.query;
@@ -1352,9 +1894,7 @@ router.get('/recent-logins', requireAdmin, async (req, res) => {
     
     res.json({
       message: 'Recent logins retrieved successfully',
-      recentLogins,
-      currentIST: getCurrentISTString(),
-      timezone: 'Asia/Kolkata'
+      recentLogins
     });
     
   } catch (error) {
@@ -1362,9 +1902,226 @@ router.get('/recent-logins', requireAdmin, async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
+// Add this endpoint in the Analytics & Dashboard section
+router.get('/recent-logins', requireAdmin, async (req, res) => {
+  try {
+    const { limit = 10 } = req.query;
+    
+    const recentLogins = await User.find({ 
+      lastLogin: { $exists: true, $ne: null }
+    })
+    .select('fullName email role lastLogin lastSeen isActive')
+    .sort({ lastLogin: -1 })
+    .limit(parseInt(limit));
+
+    res.json({
+      message: 'Recent logins retrieved successfully',
+      recentLogins
+    });
+  } catch (error) {
+    console.error('Get recent logins error:', error);
+    res.status(500).json({ error: 'Failed to fetch recent logins' });
+  }
+});
+// Export users data
+router.get('/export/users', requireAdmin, async (req, res) => {
+  try {
+    const users = await User.find({})
+      .select('fullName email contactNumber Sem expertiseLevel role isActive createdAt lastLogin')
+      .sort({ createdAt: -1 });
+
+    const fields = [
+      'fullName',
+      'email', 
+      'contactNumber',
+      'Sem',
+      'expertiseLevel',
+      'role',
+      'isActive',
+      'createdAt',
+      'lastLogin'
+    ];
+
+    const parser = new Parser({ fields });
+    const csv = parser.parse(users);
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename=users-export.csv');
+    res.send(csv);
+  } catch (error) {
+    console.error('Export users error:', error);
+    res.status(500).json({ error: 'Failed to export users data' });
+  }
+});
+
+// Export CTF data
+router.get('/export/ctfs', requireAdmin, async (req, res) => {
+  try {
+    const ctfs = await CTF.find({})
+      .populate('createdBy', 'fullName email')
+      .select('title category points difficulty status isPublished participants createdAt')
+      .sort({ createdAt: -1 });
+
+    const formattedCTFs = ctfs.map(ctf => ({
+      title: ctf.title,
+      category: ctf.category,
+      points: ctf.points,
+      difficulty: ctf.difficulty,
+      status: ctf.status,
+      isPublished: ctf.isPublished,
+      participants: ctf.participants.length,
+      createdBy: ctf.createdBy?.fullName || 'Unknown',
+      createdAt: ctf.createdAt
+    }));
+
+    const fields = [
+      'title',
+      'category',
+      'points',
+      'difficulty', 
+      'status',
+      'isPublished',
+      'participants',
+      'createdBy',
+      'createdAt'
+    ];
+
+    const parser = new Parser({ fields });
+    const csv = parser.parse(formattedCTFs);
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename=ctfs-export.csv');
+    res.send(csv);
+  } catch (error) {
+    console.error('Export CTFs error:', error);
+    res.status(500).json({ error: 'Failed to export CTFs data' });
+  }
+});
+
+
+// System health check
+router.get('/system-health', requireAdmin, async (req, res) => {
+  try {
+    const [userCount, ctfCount, submissionCount, dbStatus] = await Promise.all([
+      User.countDocuments(),
+      CTF.countDocuments(),
+      Submission.countDocuments(),
+      // Simple database connection check
+      User.findOne().select('_id').lean()
+    ]);
+
+    const health = {
+      status: 'healthy',
+      timestamp: new Date(),
+      components: {
+        database: {
+          status: dbStatus ? 'connected' : 'disconnected',
+          users: userCount,
+          ctfs: ctfCount,
+          submissions: submissionCount
+        },
+        api: {
+          status: 'running',
+          uptime: process.uptime()
+        },
+        memory: {
+          used: process.memoryUsage().heapUsed / 1024 / 1024,
+          total: process.memoryUsage().heapTotal / 1024 / 1024
+        }
+      }
+    };
+
+    res.json(health);
+  } catch (error) {
+    console.error('System health check error:', error);
+    res.status(500).json({ 
+      status: 'unhealthy',
+      error: 'System health check failed' 
+    });
+  }
+});
+
+// Get system configuration
+router.get('/system/config', requireAdmin, async (req, res) => {
+  try {
+    const config = {
+      environment: process.env.NODE_ENV || 'development',
+      frontendUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
+      emailEnabled: !!process.env.EMAIL_SERVICE,
+      features: {
+        userRegistration: true,
+        ctfCreation: true,
+        emailNotifications: !!process.env.EMAIL_SERVICE,
+        fileUploads: true,
+        realTimeLeaderboard: true
+      },
+      limits: {
+        maxFileSize: '4MB',
+        maxUsers: 300,
+        maxCTFs: 50,
+        maxSubmissionsPerCTF: 1
+      },
+      version: '0.0.1'
+    };
+
+    res.json({ config });
+  } catch (error) {
+    console.error('Get system config error:', error);
+    res.status(500).json({ error: 'Failed to get system configuration' });
+  }
+});
+
+// Bulk user operations
+router.post('/bulk/users/activate', requireAdmin, async (req, res) => {
+  try {
+    const { userIds } = req.body;
+    
+    if (!userIds || !Array.isArray(userIds)) {
+      return res.status(400).json({ error: 'User IDs array is required' });
+    }
+
+    const result = await User.updateMany(
+      { _id: { $in: userIds } },
+      { $set: { isActive: true } }
+    );
+
+    res.json({
+      message: `${result.modifiedCount} users activated successfully`,
+      activated: result.modifiedCount
+    });
+  } catch (error) {
+    console.error('Bulk activate users error:', error);
+    res.status(500).json({ error: 'Failed to activate users' });
+  }
+});
+
+router.post('/bulk/users/deactivate', requireAdmin, async (req, res) => {
+  try {
+    const { userIds } = req.body;
+    
+    if (!userIds || !Array.isArray(userIds)) {
+      return res.status(400).json({ error: 'User IDs array is required' });
+    }
+
+    const result = await User.updateMany(
+      { _id: { $in: userIds } },
+      { $set: { isActive: false } }
+    );
+
+    res.json({
+      message: `${result.modifiedCount} users deactivated successfully`,
+      deactivated: result.modifiedCount
+    });
+  } catch (error) {
+    console.error('Bulk deactivate users error:', error);
+    res.status(500).json({ error: 'Failed to deactivate users' });
+  }
+});
+
+// Add these routes to the adminRoutes.js file
 
 // ==========================
-// SUBMISSION MANAGEMENT
+// SCREENSHOT REVIEW ROUTES
 // ==========================
 
 // Get all pending submissions
@@ -1387,8 +2144,6 @@ router.get('/submissions/pending', requireAdmin, async (req, res) => {
 
     res.json({
       submissions,
-      currentIST: getCurrentISTString(),
-      timezone: 'Asia/Kolkata',
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -1451,8 +2206,6 @@ router.get('/submissions', requireAdmin, async (req, res) => {
 
       return res.json({
         submissions: paginatedSubmissions,
-        currentIST: getCurrentISTString(),
-        timezone: 'Asia/Kolkata',
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
@@ -1474,8 +2227,6 @@ router.get('/submissions', requireAdmin, async (req, res) => {
 
     res.json({
       submissions,
-      currentIST: getCurrentISTString(),
-      timezone: 'Asia/Kolkata',
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -1509,9 +2260,7 @@ router.get('/submissions/:submissionId', requireAdmin, async (req, res) => {
 
     res.json({
       message: 'Submission retrieved successfully',
-      submission,
-      currentIST: getCurrentISTString(),
-      timezone: 'Asia/Kolkata'
+      submission
     });
   } catch (error) {
     console.error('Get submission error:', error);
@@ -1519,42 +2268,44 @@ router.get('/submissions/:submissionId', requireAdmin, async (req, res) => {
   }
 });
 
-// Get submission screenshot for review
-router.get('/submissions/:submissionId/screenshot', requireAdmin, async (req, res) => {
+// Get user's all submissions
+router.get('/users/:userId/submissions', requireAdmin, async (req, res) => {
   try {
-    const { submissionId } = req.params;
+    const { userId } = req.params;
+    const { page = 1, limit = 20 } = req.query;
 
-    const submission = await Submission.findById(submissionId)
-      .populate('user', 'fullName email')
-      .populate('ctf', 'title category points')
-      .populate('reviewedBy', 'fullName email');
-
-    if (!submission) {
-      return res.status(404).json({ error: 'Submission not found' });
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({ error: 'Invalid user ID format' });
     }
 
+    const submissions = await Submission.find({ 
+      user: userId
+    })
+    .populate('ctf', 'title category points')
+    .populate('reviewedBy', 'fullName email')
+    .sort({ submittedAt: -1 })
+    .limit(limit * 1)
+    .skip((page - 1) * limit);
+
+
+    const total = await Submission.countDocuments({ 
+      user: userId
+    });
+
+    // Get user info
+    const user = await User.findById(userId)
     res.json({
-      message: 'Submission retrieved successfully',
-      submission: {
-        _id: submission._id,
-        user: submission.user,
-        ctf: submission.ctf,
-        flag: submission.flag,
-        screenshot: submission.screenshot,
-        submissionStatus: submission.submissionStatus,
-        adminFeedback: submission.adminFeedback,
-        submittedAt: submission.submittedAt,
-        reviewedAt: submission.reviewedAt,
-        reviewedBy: submission.reviewedBy,
-        attemptNumber: submission.attemptNumber,
-        isCorrect: submission.isCorrect,
-        points: submission.points
-      },
-      currentIST: getCurrentISTString(),
-      timezone: 'Asia/Kolkata'
+      user,
+      submissions,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / limit)
+      }
     });
   } catch (error) {
-    console.error('Get submission screenshot error:', error);
+    console.error('Get user submissions error:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -1644,10 +2395,10 @@ router.post('/submissions/:submissionId/approve', requireAdmin, [
 
     // Send approval email
     try {
-      await sendMail({
-        email: submission.user.email,
-        subject: `🎉 CTF Submission Approved - ${submission.ctf.title}`,
-        message: `
+   await sendMail({
+  email: submission.user.email,
+  subject: `🎉 CTF Submission Approved - ${submission.ctf.title}`,
+  message: `
 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #e0e0e0;">
   <div style="background: #28a745; color: white; padding: 25px; text-align: center;">
     <h2 style="margin: 0;">🎉 Submission Approved!</h2>
@@ -1694,8 +2445,8 @@ router.post('/submissions/:submissionId/approve', requireAdmin, [
     © ${new Date().getFullYear()} CTF Platform. All rights reserved.
   </div>
 </div>
-        `
-      });
+  `
+});
     } catch (emailError) {
       console.error('Failed to send approval email:', emailError);
     }
@@ -1707,9 +2458,7 @@ router.post('/submissions/:submissionId/approve', requireAdmin, [
         submissionStatus: submission.submissionStatus,
         points: submission.points,
         reviewedAt: submission.reviewedAt
-      },
-      currentIST: getCurrentISTString(),
-      timezone: 'Asia/Kolkata'
+      }
     });
   } catch (error) {
     console.error('Approve submission error:', error);
@@ -1774,10 +2523,10 @@ router.post('/submissions/:submissionId/reject', requireAdmin, [
 
     // Send rejection email
     try {
-      await sendMail({
-        email: submission.user.email,
-        subject: `CTF Submission Requires Attention - ${submission.ctf.title}`,
-        message: `
+  await sendMail({
+  email: submission.user.email,
+  subject: `CTF Submission Requires Attention - ${submission.ctf.title}`,
+  message: `
 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #e0e0e0;">
   <div style="background: #dc3545; color: white; padding: 25px; text-align: center;">
     <h2 style="margin: 0;">⚠️ Submission Requires Review</h2>
@@ -1833,8 +2582,8 @@ router.post('/submissions/:submissionId/reject', requireAdmin, [
     © ${new Date().getFullYear()} CTF Platform. All rights reserved.
   </div>
 </div>
-        `
-      });
+  `
+});
     } catch (emailError) {
       console.error('Failed to send rejection email:', emailError);
       // Don't fail the request if email fails
@@ -1848,9 +2597,7 @@ router.post('/submissions/:submissionId/reject', requireAdmin, [
         adminFeedback: submission.adminFeedback,
         reviewedAt: submission.reviewedAt,
         canResubmit: canResubmit
-      },
-      currentIST: getCurrentISTString(),
-      timezone: 'Asia/Kolkata'
+      }
     });
   } catch (error) {
     console.error('Reject submission error:', error);
@@ -1858,332 +2605,384 @@ router.post('/submissions/:submissionId/reject', requireAdmin, [
   }
 });
 
-// ==========================
-// EXPORT ROUTES WITH IST
-// ==========================
-
-// Export CTF submissions with IST timestamps
-router.get('/export/ctfs/:id/submissions', requireAdmin, async (req, res) => {
+// Enhanced submission statistics with more analytics
+router.get('/submissions/stats', requireAdmin, async (req, res) => {
   try {
-    const ctf = await CTF.findById(req.params.id);
-    if (!ctf) {
-      return res.status(404).json({ error: 'CTF not found' });
+    const { timeRange = 'all' } = req.query;
+    
+    let dateFilter = {};
+    const now = new Date();
+    
+    switch (timeRange) {
+      case '24h':
+        dateFilter.submittedAt = { $gte: new Date(now - 24 * 60 * 60 * 1000) };
+        break;
+      case '7d':
+        dateFilter.submittedAt = { $gte: new Date(now - 7 * 24 * 60 * 60 * 1000) };
+        break;
+      case '30d':
+        dateFilter.submittedAt = { $gte: new Date(now - 30 * 24 * 60 * 60 * 1000) };
+        break;
+      // 'all' includes all submissions
     }
 
-    const submissions = await Submission.find({ ctf: req.params.id })
-      .populate('user', 'fullName email')
-      .populate('reviewedBy', 'fullName email')
-      .sort({ submittedAt: -1 });
+    const [statusStats, totalStats, dailyStats, ctfStats] = await Promise.all([
+      // Status distribution
+      Submission.aggregate([
+        { $match: dateFilter },
+        {
+          $group: {
+            _id: '$submissionStatus',
+            count: { $sum: 1 }
+          }
+        }
+      ]),
+      
+      // Total statistics
+      Submission.aggregate([
+        { $match: dateFilter },
+        {
+          $group: {
+            _id: null,
+            totalSubmissions: { $sum: 1 },
+            pendingSubmissions: {
+              $sum: { $cond: [{ $eq: ['$submissionStatus', 'pending'] }, 1, 0] }
+            },
+            approvedSubmissions: {
+              $sum: { $cond: [{ $eq: ['$submissionStatus', 'approved'] }, 1, 0] }
+            },
+            rejectedSubmissions: {
+              $sum: { $cond: [{ $eq: ['$submissionStatus', 'rejected'] }, 1, 0] }
+            },
+            totalPoints: { $sum: '$points' },
+            averagePoints: { $avg: '$points' }
+          }
+        }
+      ]),
+      
+      // Daily submissions for last 7 days
+      Submission.aggregate([
+        {
+          $match: {
+            submittedAt: { $gte: new Date(now - 7 * 24 * 60 * 60 * 1000) }
+          }
+        },
+        {
+          $group: {
+            _id: {
+              $dateToString: {
+                format: '%Y-%m-%d',
+                date: '$submittedAt'
+              }
+            },
+            count: { $sum: 1 },
+            approved: {
+              $sum: { $cond: [{ $eq: ['$submissionStatus', 'approved'] }, 1, 0] }
+            },
+            pending: {
+              $sum: { $cond: [{ $eq: ['$submissionStatus', 'pending'] }, 1, 0] }
+            }
+          }
+        },
+        { $sort: { _id: 1 } }
+      ]),
+      
+      // CTF-wise statistics
+      Submission.aggregate([
+        { $match: dateFilter },
+        {
+          $lookup: {
+            from: 'ctfs',
+            localField: 'ctf',
+            foreignField: '_id',
+            as: 'ctfInfo'
+          }
+        },
+        { $unwind: '$ctfInfo' },
+        {
+          $group: {
+            _id: '$ctfInfo.title',
+            totalSubmissions: { $sum: 1 },
+            approvedSubmissions: {
+              $sum: { $cond: [{ $eq: ['$submissionStatus', 'approved'] }, 1, 0] }
+            },
+            averagePoints: { $avg: '$points' }
+          }
+        },
+        { $sort: { totalSubmissions: -1 } },
+        { $limit: 10 }
+      ])
+    ]);
 
-    if (!submissions.length) {
-      return res.status(404).json({ error: 'No submissions found for this CTF' });
-    }
-
-    // Helper to convert date to IST string
-    const toIST = (date) => {
-      if (!date) return '';
-      return new Date(date).toLocaleString('en-IN', {
-        timeZone: 'Asia/Kolkata',
-        hour12: false,
-      });
+    const stats = {
+      statusDistribution: statusStats,
+      totals: totalStats[0] || {
+        totalSubmissions: 0,
+        pendingSubmissions: 0,
+        approvedSubmissions: 0,
+        rejectedSubmissions: 0,
+        totalPoints: 0,
+        averagePoints: 0
+      },
+      dailyTrends: dailyStats,
+      topCTFs: ctfStats,
+      timeRange: timeRange
     };
 
-    // Map only required fields
-    const formattedSubmissions = submissions.map((sub) => ({
-      userFullName: sub.user?.fullName || 'N/A',
-      userEmail: sub.user?.email || 'N/A',
-      screenshotUrl: sub.screenshot?.url || '',
-      submissionStatus: sub.submissionStatus || '',
-      points: sub.points ?? 0,
-      submittedAt: toIST(sub.submittedAt),
-      reviewedAt: toIST(sub.reviewedAt),
-      reviewedBy: sub.reviewedBy?.fullName || sub.reviewedBy?.email || 'N/A',
-    }));
-
-    const fields = [
-      'userFullName',
-      'userEmail',
-      'screenshotUrl',
-      'submissionStatus',
-      'points',
-      'submittedAt',
-      'reviewedAt',
-      'reviewedBy',
-    ];
-
-    const parser = new Parser({ fields });
-    const csv = parser.parse(formattedSubmissions);
-
-    const currentIST = new Date().toLocaleString('en-IN', { 
-      timeZone: 'Asia/Kolkata',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit'
-    }).replace(/\//g, '-');
-
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename=submissions-${ctf.title}-${currentIST}.csv`
-    );
-
-    res.send(csv);
+    res.json(stats);
   } catch (error) {
-    console.error('Export submissions error:', error);
-    res.status(500).json({ error: 'Failed to export submissions' });
+    console.error('Get submission stats error:', error);
+    res.status(500).json({ error: 'Server error' });
   }
 });
-
-// Export CTF participants
-router.get('/export/ctfs/:id/participants', requireAdmin, async (req, res) => {
+// In adminRoutes.js - Add this route for screenshot review
+router.get('/submissions/:submissionId/screenshot', requireAdmin, async (req, res) => {
   try {
-    const ctf = await CTF.findById(req.params.id).populate('participants.user', 'fullName email expertiseLevel');
-    if (!ctf) {
-      return res.status(404).json({ error: 'CTF not found' });
+    const { submissionId } = req.params;
+
+    const submission = await Submission.findById(submissionId)
+      .populate('user', 'fullName email')
+      .populate('ctf', 'title category points')
+      .populate('reviewedBy', 'fullName email');
+
+    if (!submission) {
+      return res.status(404).json({ error: 'Submission not found' });
     }
 
-    const participantsData = ctf.participants.map(p => ({
-      fullName: p.user.fullName,
-      email: p.user.email,
-      expertiseLevel: p.user.expertiseLevel,
-      joinedAt: p.joinedAt,
-      submittedAt: p.submittedAt,
-      isCorrect: p.isCorrect,
-      pointsEarned: p.pointsEarned,
-      attempts: p.attempts
-    }));
-
-    const fields = [
-      'fullName',
-      'email',
-      'expertiseLevel',
-      'joinedAt',
-      'submittedAt',
-      'isCorrect',
-      'pointsEarned',
-      'attempts'
-    ];
-
-    const parser = new Parser({ fields });
-    const csv = parser.parse(participantsData);
-
-    const currentIST = new Date().toLocaleString('en-IN', { 
-      timeZone: 'Asia/Kolkata',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit'
-    }).replace(/\//g, '-');
-
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', `attachment; filename=participants-${ctf.title}-${currentIST}.csv`);
-    res.send(csv);
-  } catch (error) {
-    console.error('Export participants error:', error);
-    res.status(500).json({ error: 'Failed to export participants' });
-  }
-});
-
-// Export users data
-router.get('/export/users', requireAdmin, async (req, res) => {
-  try {
-    const users = await User.find({})
-      .select('fullName email contactNumber Sem expertiseLevel role isActive createdAt lastLogin')
-      .sort({ createdAt: -1 });
-
-    const fields = [
-      'fullName',
-      'email', 
-      'contactNumber',
-      'Sem',
-      'expertiseLevel',
-      'role',
-      'isActive',
-      'createdAt',
-      'lastLogin'
-    ];
-
-    const parser = new Parser({ fields });
-    const csv = parser.parse(users);
-
-    const currentIST = new Date().toLocaleString('en-IN', { 
-      timeZone: 'Asia/Kolkata',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit'
-    }).replace(/\//g, '-');
-
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', `attachment; filename=users-export-${currentIST}.csv`);
-    res.send(csv);
-  } catch (error) {
-    console.error('Export users error:', error);
-    res.status(500).json({ error: 'Failed to export users data' });
-  }
-});
-
-// Export CTF data
-router.get('/export/ctfs', requireAdmin, async (req, res) => {
-  try {
-    const ctfs = await CTF.find({})
-      .populate('createdBy', 'fullName email')
-      .select('title category points difficulty status isPublished participants createdAt')
-      .sort({ createdAt: -1 });
-
-    const formattedCTFs = ctfs.map(ctf => ({
-      title: ctf.title,
-      category: ctf.category,
-      points: ctf.points,
-      difficulty: ctf.difficulty,
-      status: ctf.status,
-      isPublished: ctf.isPublished,
-      participants: ctf.participants.length,
-      createdBy: ctf.createdBy?.fullName || 'Unknown',
-      createdAt: ctf.createdAt
-    }));
-
-    const fields = [
-      'title',
-      'category',
-      'points',
-      'difficulty', 
-      'status',
-      'isPublished',
-      'participants',
-      'createdBy',
-      'createdAt'
-    ];
-
-    const parser = new Parser({ fields });
-    const csv = parser.parse(formattedCTFs);
-
-    const currentIST = new Date().toLocaleString('en-IN', { 
-      timeZone: 'Asia/Kolkata',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit'
-    }).replace(/\//g, '-');
-
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', `attachment; filename=ctfs-export-${currentIST}.csv`);
-    res.send(csv);
-  } catch (error) {
-    console.error('Export CTFs error:', error);
-    res.status(500).json({ error: 'Failed to export CTFs data' });
-  }
-});
-
-// ==========================
-// SYSTEM MANAGEMENT
-// ==========================
-
-// Update all CTF statuses
-router.post('/update-ctf-statuses', requireAdmin, async (req, res) => {
-  try {
-    const result = await CTF.updateAllStatuses();
-    res.json({ 
-      message: 'CTF statuses updated successfully',
-      updated: result.updated,
-      currentIST: getCurrentISTString(),
-      timezone: 'Asia/Kolkata'
+    res.json({
+      message: 'Submission retrieved successfully',
+      submission: {
+        _id: submission._id,
+        user: submission.user,
+        ctf: submission.ctf,
+        flag: submission.flag,
+        screenshot: submission.screenshot,
+        submissionStatus: submission.submissionStatus,
+        adminFeedback: submission.adminFeedback,
+        submittedAt: submission.submittedAt,
+        reviewedAt: submission.reviewedAt,
+        reviewedBy: submission.reviewedBy,
+        attemptNumber: submission.attemptNumber,
+        isCorrect: submission.isCorrect,
+        points: submission.points
+      }
     });
   } catch (error) {
-    console.error('Update CTF statuses error:', error);
+    console.error('Get submission screenshot error:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-// Admin logout
-router.post('/logout', requireAdmin, (req, res) => {
-  res.clearCookie('jwt');
-  res.json({ 
-    message: 'Logged out successfully',
-    currentIST: getCurrentISTString()
-  });
-});
 
-// System health check
-router.get('/system-health', requireAdmin, async (req, res) => {
+// ==========================
+// SUBMISSION ANALYTICS ROUTES
+// ==========================
+
+// Get comprehensive submission analytics
+router.get('/analytics/submissions', requireAdmin, async (req, res) => {
   try {
-    const [userCount, ctfCount, submissionCount, dbStatus] = await Promise.all([
-      User.countDocuments(),
-      CTF.countDocuments(),
-      Submission.countDocuments(),
-      // Simple database connection check
-      User.findOne().select('_id').lean()
+    const { timeRange = '7d' } = req.query;
+    
+    // Calculate date range
+    let startDate;
+    const endDate = new Date();
+    
+    switch (timeRange) {
+      case '24h':
+        startDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        break;
+      case '7d':
+        startDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        break;
+      case '30d':
+        startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        break;
+      default:
+        startDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    }
+
+    // Get submission statistics
+    const [statusStats, dailyTrend, categoryStats, userStats] = await Promise.all([
+      // Status distribution
+      Submission.aggregate([
+        {
+          $match: {
+            submittedAt: { $gte: startDate, $lte: endDate }
+          }
+        },
+        {
+          $group: {
+            _id: '$submissionStatus',
+            count: { $sum: 1 }
+          }
+        }
+      ]),
+      
+      // Daily trend for the last 7 days
+      Submission.aggregate([
+        {
+          $match: {
+            submittedAt: { 
+              $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+              $lte: endDate
+            }
+          }
+        },
+        {
+          $group: {
+            _id: {
+              $dateToString: {
+                format: '%Y-%m-%d',
+                date: '$submittedAt'
+              }
+            },
+            total: { $sum: 1 },
+            approved: {
+              $sum: { $cond: [{ $eq: ['$submissionStatus', 'approved'] }, 1, 0] }
+            },
+            pending: {
+              $sum: { $cond: [{ $eq: ['$submissionStatus', 'pending'] }, 1, 0] }
+            },
+            rejected: {
+              $sum: { $cond: [{ $eq: ['$submissionStatus', 'rejected'] }, 1, 0] }
+            }
+          }
+        },
+        { $sort: { _id: 1 } }
+      ]),
+      
+      // Category performance
+      Submission.aggregate([
+        {
+          $match: {
+            submittedAt: { $gte: startDate, $lte: endDate },
+            submissionStatus: 'approved'
+          }
+        },
+        {
+          $lookup: {
+            from: 'ctfs',
+            localField: 'ctf',
+            foreignField: '_id',
+            as: 'ctfInfo'
+          }
+        },
+        { $unwind: '$ctfInfo' },
+        {
+          $group: {
+            _id: '$ctfInfo.category',
+            totalSolved: { $sum: 1 },
+            totalPoints: { $sum: '$points' },
+            averagePoints: { $avg: '$points' }
+          }
+        },
+        { $sort: { totalSolved: -1 } }
+      ]),
+      
+      // User submission statistics
+      Submission.aggregate([
+        {
+          $match: {
+            submittedAt: { $gte: startDate, $lte: endDate }
+          }
+        },
+        {
+          $group: {
+            _id: '$user',
+            totalSubmissions: { $sum: 1 },
+            approvedSubmissions: {
+              $sum: { $cond: [{ $eq: ['$submissionStatus', 'approved'] }, 1, 0] }
+            },
+            totalPoints: { $sum: '$points' }
+          }
+        },
+        {
+          $lookup: {
+            from: 'users',
+            localField: '_id',
+            foreignField: '_id',
+            as: 'userInfo'
+          }
+        },
+        { $unwind: '$userInfo' },
+        {
+          $project: {
+            'userInfo.password': 0,
+            'userInfo.loginHistory': 0
+          }
+        },
+        { $sort: { totalPoints: -1 } },
+        { $limit: 10 }
+      ])
     ]);
 
-    const health = {
-      status: 'healthy',
-      timestamp: new Date(),
-      currentIST: getCurrentISTString(),
-      timezone: 'Asia/Kolkata',
-      components: {
-        database: {
-          status: dbStatus ? 'connected' : 'disconnected',
-          users: userCount,
-          ctfs: ctfCount,
-          submissions: submissionCount
-        },
-        api: {
-          status: 'running',
-          uptime: process.uptime()
-        },
-        memory: {
-          used: process.memoryUsage().heapUsed / 1024 / 1024,
-          total: process.memoryUsage().heapTotal / 1024 / 1024
+    // Get total counts
+    const totalStats = await Submission.aggregate([
+      {
+        $match: {
+          submittedAt: { $gte: startDate, $lte: endDate }
         }
+      },
+      {
+        $group: {
+          _id: null,
+          totalSubmissions: { $sum: 1 },
+          approvedSubmissions: {
+            $sum: { $cond: [{ $eq: ['$submissionStatus', 'approved'] }, 1, 0] }
+          },
+          pendingSubmissions: {
+            $sum: { $cond: [{ $eq: ['$submissionStatus', 'pending'] }, 1, 0] }
+          },
+          rejectedSubmissions: {
+            $sum: { $cond: [{ $eq: ['$submissionStatus', 'rejected'] }, 1, 0] }
+          },
+          totalPoints: { $sum: '$points' },
+          averagePoints: { $avg: '$points' }
+        }
+      }
+    ]);
+
+    // Get recent submissions for activity feed
+    const recentSubmissions = await Submission.find({
+      submittedAt: { $gte: startDate, $lte: endDate }
+    })
+    .populate('user', 'fullName email')
+    .populate('ctf', 'title category points')
+    .populate('reviewedBy', 'fullName email')
+    .sort({ submittedAt: -1 })
+    .limit(20)
+    .select('user ctf submissionStatus points submittedAt reviewedAt reviewedBy');
+
+    const analytics = {
+      totals: totalStats[0] || {
+        totalSubmissions: 0,
+        approvedSubmissions: 0,
+        pendingSubmissions: 0,
+        rejectedSubmissions: 0,
+        totalPoints: 0,
+        averagePoints: 0
+      },
+      statusDistribution: statusStats,
+      dailyTrend: dailyTrend,
+      categoryPerformance: categoryStats,
+      topUsers: userStats,
+      recentSubmissions: recentSubmissions,
+      timeRange: {
+        start: startDate,
+        end: endDate,
+        label: timeRange
       }
     };
 
-    res.json(health);
-  } catch (error) {
-    console.error('System health check error:', error);
-    res.status(500).json({ 
-      status: 'unhealthy',
-      error: 'System health check failed',
-      currentIST: getCurrentISTString()
-    });
-  }
-});
-
-// Get system configuration
-router.get('/system/config', requireAdmin, async (req, res) => {
-  try {
-    const config = {
-      environment: process.env.NODE_ENV || 'development',
-      frontendUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
-      emailEnabled: !!process.env.EMAIL_SERVICE,
-      timezone: 'Asia/Kolkata (IST)',
-      features: {
-        userRegistration: true,
-        ctfCreation: true,
-        emailNotifications: !!process.env.EMAIL_SERVICE,
-        fileUploads: true,
-        realTimeLeaderboard: true,
-        istTimezone: true
-      },
-      limits: {
-        maxFileSize: '4MB',
-        maxUsers: 300,
-        maxCTFs: 50,
-        maxSubmissionsPerCTF: 1
-      },
-      version: '0.0.1'
-    };
-
-    res.json({ 
-      config,
-      currentIST: getCurrentISTString()
+    res.json({
+      message: 'Submission analytics retrieved successfully',
+      analytics
     });
   } catch (error) {
-    console.error('Get system config error:', error);
-    res.status(500).json({ error: 'Failed to get system configuration' });
+    console.error('Get submission analytics error:', error);
+    res.status(500).json({ error: 'Failed to fetch submission analytics' });
   }
 });
-
-// ==========================
-// SUBMISSION STATISTICS
-// ==========================
 
 router.get('/submissions/stats', requireAdmin, async (req, res) => {
   try {
@@ -2302,9 +3101,7 @@ router.get('/submissions/stats', requireAdmin, async (req, res) => {
         averagePoints: 0
       },
       dailyTrends: dailyTrends,
-      timeRange: timeRange,
-      currentIST: getCurrentISTString(),
-      timezone: 'Asia/Kolkata'
+      timeRange: timeRange
     };
 
     console.log('✅ Final result:', result);
@@ -2320,5 +3117,4 @@ router.get('/submissions/stats', requireAdmin, async (req, res) => {
     });
   }
 });
-
 module.exports = { router, requireAdmin };
