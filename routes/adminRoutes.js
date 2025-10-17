@@ -1782,12 +1782,12 @@ router.get('/system/config', requireAdmin, async (req, res) => {
         realTimeLeaderboard: true
       },
       limits: {
-        maxFileSize: '10MB',
-        maxUsers: 1000,
-        maxCTFs: 100,
-        maxSubmissionsPerCTF: 3
+        maxFileSize: '4MB',
+        maxUsers: 300,
+        maxCTFs: 50,
+        maxSubmissionsPerCTF: 1
       },
-      version: '1.0.0'
+      version: '0.0.1'
     };
 
     res.json({ config });
