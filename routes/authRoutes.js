@@ -12,44 +12,113 @@ const router = express.Router();
 
 // Require authentication
 // In authRoutes.js - update the requireAuth middleware
+// const requireAuth = async (req, res, next) => {
+//   try {
+//     console.log('🔐 requireAuth middleware checking authentication...');
+    
+//     // Use same token extraction as admin routes
+//     let token = req.cookies?.jwt || 
+//                 req.headers.authorization?.replace('Bearer ', '') ||
+//                 req.headers.Authorization?.replace('Bearer ', '') ||
+//                 req.query?.token;
+
+//     console.log('📡 Token present:', !!token);
+    
+//     if (!token) {
+//       console.log('❌ No token found - authentication required');
+//       return res.status(401).json({ error: 'Authentication required' });
+//     }
+
+//     // Clean the token (same as admin routes)
+//     token = token.trim().replace(/^"(.*)"$/, '$1');
+
+//     // DEVELOPMENT MODE: Handle mock tokens if needed
+//     if (process.env.NODE_ENV === 'development') {
+//       // Add any development handling if required
+//     }
+
+//     if (token === 'null' || token === 'undefined' || token === 'loggedout') {
+//       console.log('❌ Invalid token value:', token);
+//       return res.status(401).json({ error: 'Invalid token' });
+//     }
+
+//     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+//     console.log('🔍 Decoded token:', { id: decoded.id, role: decoded.role });
+
+//     const user = await User.findById(decoded.id);
+//     if (!user) {
+//       console.log('❌ User not found for ID:', decoded.id);
+//       return res.status(404).json({ error: 'User not found' });
+//     }
+//     if (!user.isActive) {
+//       console.log('❌ User account is deactivated');
+//       return res.status(403).json({ error: 'Account is deactivated' });
+//     }
+
+//     console.log('✅ User authenticated:', user.email);
+//     req.user = user;
+//     next();
+//   } catch (err) {
+//     console.error('🔒 Auth middleware error:', err.message);
+    
+//     if (err.name === 'JsonWebTokenError') {
+//       return res.status(401).json({ error: 'Invalid token' });
+//     }
+//     if (err.name === 'TokenExpiredError') {
+//       return res.status(401).json({ error: 'Token expired' });
+//     }
+    
+//     console.error('Auth middleware unexpected error:', err);
+//     res.status(500).json({ error: 'Server error' });
+//   }
+// };
+// In authRoutes.js - update requireAuth middleware
 const requireAuth = async (req, res, next) => {
   try {
-    console.log('🔐 requireAuth middleware checking authentication...');
+    console.log('🔐 User auth middleware checking authentication...');
     
-    // Use same token extraction as admin routes
-    let token = req.cookies?.jwt || 
+    // Extract token from multiple sources - prefer user_jwt cookie
+    let token = req.cookies?.user_jwt || 
+                req.cookies?.jwt ||
                 req.headers.authorization?.replace('Bearer ', '') ||
                 req.headers.Authorization?.replace('Bearer ', '') ||
                 req.query?.token;
 
-    console.log('📡 Token present:', !!token);
+    console.log('📡 User token present:', !!token);
     
     if (!token) {
-      console.log('❌ No token found - authentication required');
+      console.log('❌ No user token found - authentication required');
       return res.status(401).json({ error: 'Authentication required' });
     }
 
-    // Clean the token (same as admin routes)
+    // Clean the token
     token = token.trim().replace(/^"(.*)"$/, '$1');
 
-    // DEVELOPMENT MODE: Handle mock tokens if needed
-    if (process.env.NODE_ENV === 'development') {
-      // Add any development handling if required
-    }
-
     if (token === 'null' || token === 'undefined' || token === 'loggedout') {
-      console.log('❌ Invalid token value:', token);
+      console.log('❌ Invalid user token value:', token);
       return res.status(401).json({ error: 'Invalid token' });
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    console.log('🔍 Decoded token:', { id: decoded.id, role: decoded.role });
+    console.log('🔍 Decoded user token:', { 
+      id: decoded.id, 
+      role: decoded.role,
+      isAdminCollection: decoded.isAdminCollection 
+    });
 
+    // Only look in User collection for students
     const user = await User.findById(decoded.id);
     if (!user) {
       console.log('❌ User not found for ID:', decoded.id);
       return res.status(404).json({ error: 'User not found' });
     }
+
+    // Reject admin users trying to access user routes
+    if (user.role === 'admin') {
+      console.log('❌ Admin user trying to access user route:', user.email);
+      return res.status(403).json({ error: 'Please use admin interface for admin accounts' });
+    }
+
     if (!user.isActive) {
       console.log('❌ User account is deactivated');
       return res.status(403).json({ error: 'Account is deactivated' });
@@ -59,7 +128,7 @@ const requireAuth = async (req, res, next) => {
     req.user = user;
     next();
   } catch (err) {
-    console.error('🔒 Auth middleware error:', err.message);
+    console.error('🔒 User auth middleware error:', err.message);
     
     if (err.name === 'JsonWebTokenError') {
       return res.status(401).json({ error: 'Invalid token' });
@@ -68,7 +137,7 @@ const requireAuth = async (req, res, next) => {
       return res.status(401).json({ error: 'Token expired' });
     }
     
-    console.error('Auth middleware unexpected error:', err);
+    console.error('User auth middleware unexpected error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 };
@@ -250,12 +319,95 @@ router.get('/me', requireAuth, async (req, res) => {
 });
 
 // User login
+// router.post('/login', [
+//   body('email').isEmail().withMessage('Please provide a valid email'),
+//   body('password').notEmpty().withMessage('Password is required')
+// ], async (req, res) => {
+//   try {
+//     console.log('🔐 Login attempt for:', req.body.email);
+//     const errors = validationResult(req);
+//     if (!errors.isEmpty()) {
+//       return res.status(400).json({ 
+//         error: 'Validation failed', 
+//         details: errors.array() 
+//       });
+//     }
+
+//     const { email, password } = req.body;
+//     const user = await User.findOne({ email }).select('+password');
+    
+//     if (!user) {
+//       console.log('❌ User not found:', email);
+//       return res.status(401).json({ error: 'Invalid email or password' });
+//     }
+
+//     const correct = await bcrypt.compare(password, user.password);
+//     if (!correct) {
+//       console.log('❌ Incorrect password for:', email);
+//       return res.status(401).json({ error: 'Invalid email or password' });
+//     }
+    
+//     if (!user.isActive) {
+//       console.log('❌ Account deactivated:', email);
+//       return res.status(403).json({ error: 'Account is deactivated' });
+//     }
+
+//     // Track login
+//     const clientIP = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+//     const userAgent = req.headers['user-agent'];
+
+//     user.lastLogin = new Date();
+//     user.lastSeen = new Date();
+//     user.loginHistory.push({
+//       timestamp: new Date(),
+//       ipAddress: clientIP,
+//       userAgent: userAgent,
+//       location: await getLocationFromIP(clientIP)
+//     });
+
+//     if (user.loginHistory.length > 10) {
+//       user.loginHistory = user.loginHistory.slice(-10);
+//     }
+
+//     await user.save();
+
+//     // Generate JWT token
+//     const token = jwt.sign({ 
+//       id: user._id, 
+//       role: user.role,
+//       email: user.email
+//     }, process.env.JWT_SECRET, { expiresIn: '1d' });
+
+//     // Set cookie
+//     res.cookie('jwt', token, {
+//       httpOnly: true,
+//       secure: process.env.NODE_ENV === 'production',
+//       sameSite: 'lax',
+//       maxAge: 24 * 60 * 60 * 1000 // 1 day
+//     });
+
+//     console.log('✅ Login successful for:', email);
+    
+//     const userResponse = user.toJSON();
+//     delete userResponse.password;
+    
+//     res.json({ 
+//       message: 'Login successful', 
+//       user: userResponse, 
+//       token: token 
+//     });
+//   } catch (err) {
+//     console.error('💥 Login error:', err);
+//     res.status(500).json({ error: 'Server error during login' });
+//   }
+// });
+// In authRoutes.js - Fix the login endpoint
 router.post('/login', [
   body('email').isEmail().withMessage('Please provide a valid email'),
   body('password').notEmpty().withMessage('Password is required')
 ], async (req, res) => {
   try {
-    console.log('🔐 Login attempt for:', req.body.email);
+    console.log('🔐 User login attempt for:', req.body.email);
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ 
@@ -265,11 +417,19 @@ router.post('/login', [
     }
 
     const { email, password } = req.body;
+    
+    // Only look in User collection for students
     const user = await User.findOne({ email }).select('+password');
     
     if (!user) {
       console.log('❌ User not found:', email);
       return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    // Check if user is trying to login as admin through user route
+    if (user.role === 'admin') {
+      console.log('❌ Admin trying to login through user route:', email);
+      return res.status(401).json({ error: 'Please use admin login for admin accounts' });
     }
 
     const correct = await bcrypt.compare(password, user.password);
@@ -302,22 +462,23 @@ router.post('/login', [
 
     await user.save();
 
-    // Generate JWT token
+    // Generate JWT token for user (different from admin)
     const token = jwt.sign({ 
       id: user._id, 
       role: user.role,
-      email: user.email
+      email: user.email,
+      isAdminCollection: false // Explicitly mark as user collection
     }, process.env.JWT_SECRET, { expiresIn: '1d' });
 
-    // Set cookie
-    res.cookie('jwt', token, {
+    // Set cookie with user-specific name
+    res.cookie('user_jwt', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
       maxAge: 24 * 60 * 60 * 1000 // 1 day
     });
 
-    console.log('✅ Login successful for:', email);
+    console.log('✅ User login successful for:', email);
     
     const userResponse = user.toJSON();
     delete userResponse.password;
@@ -328,7 +489,7 @@ router.post('/login', [
       token: token 
     });
   } catch (err) {
-    console.error('💥 Login error:', err);
+    console.error('💥 User login error:', err);
     res.status(500).json({ error: 'Server error during login' });
   }
 });
