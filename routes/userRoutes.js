@@ -819,15 +819,9 @@ router.get('/ctfs/:id/joined', requireAuth, async (req, res) => {
 // ==========================
 
 // Get available CTFs for user with IST status
-// In userRoutes.js - Add detailed logging to the available CTFs endpoint
 router.get('/ctfs/available', requireAuth, async (req, res) => {
   try {
-    console.log('🔍 GET /user/ctfs/available - Request received');
-    console.log('👤 User:', req.user._id, req.user.email);
-    
-    const { page = 1, limit = 10, category = 'all', search = '', status = 'all' } = req.query;
-    
-    console.log('📋 Query params:', { page, limit, category, search, status });
+    const { page = 1, limit = 10, category = 'all', search = '',status='all' } = req.query;
     
     let filter = { 
       isVisible: true, 
@@ -845,11 +839,9 @@ router.get('/ctfs/available', requireAuth, async (req, res) => {
       ];
     }
 
-    if (status !== 'all') {
+      if (status !== 'all') {
       filter.status = status;
     }
-
-    console.log('🔍 MongoDB filter:', JSON.stringify(filter, null, 2));
 
     const ctfs = await CTF.find(filter)
       .populate('createdBy', 'fullName email')
@@ -871,12 +863,6 @@ router.get('/ctfs/available', requireAuth, async (req, res) => {
     // Get unique categories for filter
     const categories = await CTF.distinct('category', { isVisible: true });
 
-    console.log('✅ Successfully fetched CTFs:', {
-      count: ctfs.length,
-      total: total,
-      categories: categories
-    });
-
     res.json({
       ctfs,
       categories,
@@ -890,21 +876,8 @@ router.get('/ctfs/available', requireAuth, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('❌ ERROR in /user/ctfs/available:', error);
-    console.error('❌ Error stack:', error.stack);
-    
-    // More detailed error information
-    if (error.name === 'CastError') {
-      console.error('❌ CastError details:', error);
-    }
-    if (error.name === 'ValidationError') {
-      console.error('❌ ValidationError details:', error);
-    }
-    
-    res.status(500).json({ 
-      error: 'Failed to fetch available CTFs',
-      details: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
+    console.error('Get available CTFs error:', error);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
