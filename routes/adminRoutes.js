@@ -784,8 +784,6 @@ router.put('/ctfs/:id/force-status', requireAdmin, [
   }
 });
 
-
-
 // Enhanced CTF analytics endpoint
 router.get('/ctf-analytics/:id', requireAdmin, async (req, res) => {
   try {
