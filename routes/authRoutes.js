@@ -11,18 +11,35 @@ const router = express.Router();
 // ----------------- MIDDLEWARE ----------------- //
 
 // Require authentication
+// In authRoutes.js - update the requireAuth middleware
 const requireAuth = async (req, res, next) => {
   try {
     console.log('🔐 requireAuth middleware checking authentication...');
     
-       let token = req.cookies?.jwt || 
-                   req.headers.authorization?.replace('Bearer ', '') ||
-                   req.headers.Authorization?.replace('Bearer ', '') ||
-                   req.query?.token;
+    // Use same token extraction as admin routes
+    let token = req.cookies?.jwt || 
+                req.headers.authorization?.replace('Bearer ', '') ||
+                req.headers.Authorization?.replace('Bearer ', '') ||
+                req.query?.token;
+
+    console.log('📡 Token present:', !!token);
     
     if (!token) {
       console.log('❌ No token found - authentication required');
       return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    // Clean the token (same as admin routes)
+    token = token.trim().replace(/^"(.*)"$/, '$1');
+
+    // DEVELOPMENT MODE: Handle mock tokens if needed
+    if (process.env.NODE_ENV === 'development') {
+      // Add any development handling if required
+    }
+
+    if (token === 'null' || token === 'undefined' || token === 'loggedout') {
+      console.log('❌ Invalid token value:', token);
+      return res.status(401).json({ error: 'Invalid token' });
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
